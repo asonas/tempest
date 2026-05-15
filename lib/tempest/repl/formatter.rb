@@ -49,10 +49,29 @@ module Tempest
         handle = resolver&.resolve(event.did)
         body = if event.operation == :delete
           "(deleted #{event.collection}/#{event.rkey})"
+        elsif event.respond_to?(:like?) && event.like?
+          "liked #{subject_owner_label(event.subject_uri, resolver)}"
+        elsif event.respond_to?(:repost?) && event.repost?
+          "reposted #{subject_owner_label(event.subject_uri, resolver)}"
         else
           squeeze(event.text)
         end
         compose(format_time(event.created_at), handle, event.did, body)
+      end
+
+      def subject_owner_label(subject_uri, resolver)
+        did = subject_did(subject_uri)
+        return "a post" unless did
+
+        handle = resolver&.resolve(did)
+        owner = handle ? handle_label(handle) : did_label(did)
+        "#{owner}'s post"
+      end
+
+      def subject_did(subject_uri)
+        return nil if subject_uri.nil? || subject_uri.empty?
+        match = subject_uri.match(%r{\Aat://([^/]+)/})
+        match && match[1]
       end
 
       def squeeze(text)

@@ -1,5 +1,6 @@
 require_relative "test_helper"
 require "tempest/post"
+require "tempest/jetstream/decoder"
 require "tempest/repl/formatter"
 
 class TestREPLFormatter < Minitest::Test
@@ -108,5 +109,65 @@ class TestREPLFormatter < Minitest::Test
 
     line = Tempest::REPL::Formatter.event_line(event)
     assert_equal "<did:plc:x>: no resolver", line
+  end
+
+  def test_event_line_for_like_renders_liked_target_handle
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:actor", time_us: 1,
+      collection: "app.bsky.feed.like", operation: :create,
+      rkey: "lk", cid: nil, text: nil, created_at: "2026-01-01T00:00:00Z",
+      subject_uri: "at://did:plc:target/app.bsky.feed.post/abc",
+    )
+
+    resolver = StubResolver.new(
+      "did:plc:actor" => "alice.bsky.social",
+      "did:plc:target" => "bob.bsky.social",
+    )
+
+    line = Tempest::REPL::Formatter.event_line(event, resolver: resolver)
+    assert_equal "[09:00] @alice.bsky.social: liked @bob.bsky.social's post", line
+  end
+
+  def test_event_line_for_repost_renders_reposted_target_handle
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:actor", time_us: 1,
+      collection: "app.bsky.feed.repost", operation: :create,
+      rkey: "rp", cid: nil, text: nil, created_at: "2026-01-01T00:00:00Z",
+      subject_uri: "at://did:plc:target/app.bsky.feed.post/xyz",
+    )
+
+    resolver = StubResolver.new(
+      "did:plc:actor" => "alice.bsky.social",
+      "did:plc:target" => "bob.bsky.social",
+    )
+
+    line = Tempest::REPL::Formatter.event_line(event, resolver: resolver)
+    assert_equal "[09:00] @alice.bsky.social: reposted @bob.bsky.social's post", line
+  end
+
+  def test_event_line_for_like_falls_back_to_did_when_target_unknown
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:actor", time_us: 1,
+      collection: "app.bsky.feed.like", operation: :create,
+      rkey: "lk", cid: nil, text: nil, created_at: nil,
+      subject_uri: "at://did:plc:target/app.bsky.feed.post/abc",
+    )
+
+    resolver = StubResolver.new("did:plc:actor" => "alice.bsky.social")
+
+    line = Tempest::REPL::Formatter.event_line(event, resolver: resolver)
+    assert_equal "@alice.bsky.social: liked <did:plc:target>'s post", line
+  end
+
+  def test_event_line_for_like_without_subject_uri_renders_generic_message
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:actor", time_us: 1,
+      collection: "app.bsky.feed.like", operation: :create,
+      rkey: "lk", cid: nil, text: nil, created_at: nil,
+      subject_uri: nil,
+    )
+
+    line = Tempest::REPL::Formatter.event_line(event, resolver: StubResolver.new("did:plc:actor" => "alice.bsky.social"))
+    assert_equal "@alice.bsky.social: liked a post", line
   end
 end

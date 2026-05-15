@@ -154,7 +154,8 @@ module Tempest
           @stream_output.puts Formatter.status_line(event)
           backfill_timeline if event.state == :gapped
         else
-          return unless event.respond_to?(:post?) && event.post? && event.create?
+          return unless event.respond_to?(:create?) && event.create?
+          return unless event.post? || event.like? || event.repost?
 
           @stream_output.puts Formatter.event_line(event, resolver: @handle_resolver)
         end

@@ -14,9 +14,23 @@ module Tempest
       :cid,
       :text,
       :created_at,
+      :subject_uri,
     ) do
+      def initialize(kind:, did:, time_us:, collection:, operation:, rkey:, cid:,
+                     text:, created_at:, subject_uri: nil)
+        super
+      end
+
       def post?
         collection == "app.bsky.feed.post"
+      end
+
+      def like?
+        collection == "app.bsky.feed.like"
+      end
+
+      def repost?
+        collection == "app.bsky.feed.repost"
       end
 
       def create?
@@ -33,6 +47,7 @@ module Tempest
 
         commit = message["commit"] || {}
         record = commit["record"] || {}
+        subject = record["subject"]
 
         Event.new(
           kind: :commit,
@@ -44,6 +59,7 @@ module Tempest
           cid: commit["cid"],
           text: record["text"],
           created_at: record["createdAt"],
+          subject_uri: subject.is_a?(Hash) ? subject["uri"] : nil,
         )
       rescue JSON::ParserError
         nil

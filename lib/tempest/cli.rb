@@ -49,7 +49,11 @@ module Tempest
       )
 
       jetstream_client = Tempest::Jetstream::Client.new(
-        wanted_collections: ["app.bsky.feed.post"],
+        wanted_collections: [
+          "app.bsky.feed.post",
+          "app.bsky.feed.like",
+          "app.bsky.feed.repost",
+        ],
         wanted_dids: plan.wanted_dids,
       )
       stream_manager = Tempest::Jetstream::StreamManager.new(

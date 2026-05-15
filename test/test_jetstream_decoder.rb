@@ -84,5 +84,83 @@ class TestJetstreamDecoder < Minitest::Test
     event = decode(payload)
     assert event.post?
     assert event.create?
+    refute event.like?
+    refute event.repost?
+  end
+
+  def test_decode_returns_event_for_like_create_with_subject_uri
+    payload = {
+      did: "did:plc:actor",
+      time_us: 2,
+      kind: "commit",
+      commit: {
+        operation: "create",
+        collection: "app.bsky.feed.like",
+        rkey: "likekey",
+        record: {
+          "$type" => "app.bsky.feed.like",
+          createdAt: "2026-01-01T00:00:00Z",
+          subject: {
+            uri: "at://did:plc:target/app.bsky.feed.post/abc",
+            cid: "bafytarget",
+          },
+        },
+      },
+    }.to_json
+
+    event = decode(payload)
+
+    refute_nil event
+    assert_equal "app.bsky.feed.like", event.collection
+    assert event.like?
+    refute event.post?
+    refute event.repost?
+    assert_equal "at://did:plc:target/app.bsky.feed.post/abc", event.subject_uri
+  end
+
+  def test_decode_returns_event_for_repost_create_with_subject_uri
+    payload = {
+      did: "did:plc:actor",
+      time_us: 3,
+      kind: "commit",
+      commit: {
+        operation: "create",
+        collection: "app.bsky.feed.repost",
+        rkey: "repkey",
+        record: {
+          "$type" => "app.bsky.feed.repost",
+          createdAt: "2026-01-01T00:00:00Z",
+          subject: {
+            uri: "at://did:plc:target/app.bsky.feed.post/xyz",
+            cid: "bafytarget",
+          },
+        },
+      },
+    }.to_json
+
+    event = decode(payload)
+
+    refute_nil event
+    assert_equal "app.bsky.feed.repost", event.collection
+    assert event.repost?
+    refute event.like?
+    assert_equal "at://did:plc:target/app.bsky.feed.post/xyz", event.subject_uri
+  end
+
+  def test_decode_returns_nil_subject_uri_for_post_records
+    payload = {
+      did: "did:plc:x",
+      time_us: 4,
+      kind: "commit",
+      commit: {
+        operation: "create",
+        collection: "app.bsky.feed.post",
+        rkey: "r",
+        record: { "$type" => "app.bsky.feed.post", text: "hi", createdAt: "2026-01-01T00:00:00Z" },
+      },
+    }.to_json
+
+    event = decode(payload)
+    assert_nil event.subject_uri
   end
 end

@@ -480,6 +480,76 @@ class TestREPLRunner < Minitest::Test
     assert_equal ["older", "middle", "newer"], store.saved_payloads.first[:posts].map(&:text)
   end
 
+  def test_stream_like_event_rendered_with_target
+    require "tempest/jetstream/decoder"
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:actor", time_us: 1,
+      collection: "app.bsky.feed.like", operation: :create,
+      rkey: "lk", cid: nil, text: nil, created_at: nil,
+      subject_uri: "at://did:plc:target/app.bsky.feed.post/abc",
+    )
+
+    stream = FakeStreamManager.new
+    reader_class = Class.new do
+      def initialize(inputs, stream, event)
+        @inputs = inputs.dup
+        @stream = stream
+        @event = event
+      end
+
+      def readline(_prompt)
+        line = @inputs.shift
+        @stream.emit(@event) if line == ":quit"
+        line
+      end
+    end
+
+    Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: reader_class.new([":stream on", ":quit"], stream, event),
+      output: @output,
+      stream_manager: stream,
+    ).run
+
+    assert_match(/<did:plc:actor>: liked <did:plc:target>'s post/, @output.string)
+  end
+
+  def test_stream_repost_event_rendered_with_target
+    require "tempest/jetstream/decoder"
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:actor", time_us: 1,
+      collection: "app.bsky.feed.repost", operation: :create,
+      rkey: "rp", cid: nil, text: nil, created_at: nil,
+      subject_uri: "at://did:plc:target/app.bsky.feed.post/xyz",
+    )
+
+    stream = FakeStreamManager.new
+    reader_class = Class.new do
+      def initialize(inputs, stream, event)
+        @inputs = inputs.dup
+        @stream = stream
+        @event = event
+      end
+
+      def readline(_prompt)
+        line = @inputs.shift
+        @stream.emit(@event) if line == ":quit"
+        line
+      end
+    end
+
+    Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: reader_class.new([":stream on", ":quit"], stream, event),
+      output: @output,
+      stream_manager: stream,
+    ).run
+
+    assert_match(/<did:plc:actor>: reposted <did:plc:target>'s post/, @output.string)
+  end
+
   def test_stream_status_rendered_with_double_dash_prefix
     require "tempest/jetstream/stream_manager"
     stream = FakeStreamManager.new
