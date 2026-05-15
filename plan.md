@@ -68,14 +68,14 @@
 ### Milestone 7: タイムラインのスナップショット永続化と起動時表示
 - [x] `TimelineStore.save / load` のラウンドトリップが成立する（posts と saved_at）
 - [x] `TimelineStore.load` はファイル欠落 / 壊れた JSON で nil を返す
-- [ ] `TimelineStore.default_path` が `TEMPEST_TIMELINE_PATH` / `XDG_CONFIG_HOME` / `HOME` の優先順位を尊重する
+- [x] `TimelineStore.default_path` が `TEMPEST_TIMELINE_PATH` / `XDG_CONFIG_HOME` / `HOME` の優先順位を尊重する
 - [ ] `TimelineStore.save` は posts を直近 50 件にトリムする
-- [ ] `Runner#bootstrap_timeline` はキャッシュがあれば古い順に画面に流す
-- [ ] `Runner#bootstrap_timeline` はキャッシュ後に `Timeline.fetch` を呼び新着分のみ表示する（uri 重複は除外）
-- [ ] `Runner#bootstrap_timeline` は fetch 成功時に `TimelineStore.save` を呼ぶ
-- [ ] `Runner#bootstrap_timeline` は fetch 失敗時にエラー行を出して継続する
-- [ ] `Runner#handle_timeline` が成功時に `TimelineStore.save` を呼ぶ
-- [ ] CLI が `TimelineStore` を生成して `Runner` に渡し、`auto_start_stream` 前に bootstrap する
+- [x] `Runner#bootstrap_timeline` はキャッシュがあれば古い順に画面に流す
+- [x] `Runner#bootstrap_timeline` はキャッシュ後に `Timeline.fetch` を呼び新着分のみ表示する（uri 重複は除外）
+- [x] `Runner#bootstrap_timeline` は fetch 成功時に `TimelineStore.save` を呼ぶ
+- [x] `Runner#bootstrap_timeline` は fetch 失敗時にエラー行を出して継続する
+- [x] `Runner#handle_timeline` が成功時に `TimelineStore.save` を呼ぶ
+- [x] CLI が `TimelineStore` を生成して `Runner` に渡し、`auto_start_stream` 前に bootstrap する
 
 ## 後回し（最初のマイルストーン完了後に着手）
 - Ractor 化（CBOR デコードや高頻度フィルタ評価などの CPU 仕事）

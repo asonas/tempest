@@ -9,7 +9,12 @@ module Tempest
   # Persists the home timeline snapshot so a restarted tempest can show the
   # last-seen posts before the network is even reachable. Stored alongside
   # session.json / cursor.json under XDG_CONFIG_HOME.
+  #
+  # Callers pass posts in chronological order (oldest first, newest last); the
+  # store keeps only the most recent MAX_POSTS to bound disk usage.
   class TimelineStore
+    MAX_POSTS = 50
+
     def self.default_path(env = ENV)
       explicit = env["TEMPEST_TIMELINE_PATH"]
       return explicit if explicit && !explicit.empty?
@@ -27,7 +32,7 @@ module Tempest
 
     def save(posts:, at: Time.now)
       payload = {
-        "posts" => posts.map { |p| serialize_post(p) },
+        "posts" => posts.last(MAX_POSTS).map { |p| serialize_post(p) },
         "saved_at" => at.utc.iso8601(6),
       }
 

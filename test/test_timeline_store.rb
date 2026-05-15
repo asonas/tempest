@@ -70,4 +70,25 @@ class TestTimelineStore < Minitest::Test
     env = { "TEMPEST_TIMELINE_PATH" => "/custom/timeline.json" }
     assert_equal "/custom/timeline.json", Tempest::TimelineStore.default_path(env)
   end
+
+  def test_save_trims_to_most_recent_fifty_posts
+    store = Tempest::TimelineStore.new(path: @path)
+    posts = (1..60).map do |i|
+      Tempest::Post.new(
+        uri: "at://did:plc:a/app.bsky.feed.post/#{i}",
+        cid: "bafy#{i}",
+        handle: "alice.example",
+        display_name: "Alice",
+        text: "post ##{i}",
+        created_at: "2026-05-15T09:00:00.000Z",
+      )
+    end
+
+    store.save(posts: posts)
+    loaded = store.load
+
+    assert_equal 50, loaded[:posts].length
+    assert_equal "at://did:plc:a/app.bsky.feed.post/11", loaded[:posts].first.uri
+    assert_equal "at://did:plc:a/app.bsky.feed.post/60", loaded[:posts].last.uri
+  end
 end

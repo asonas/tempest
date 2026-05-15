@@ -3,6 +3,7 @@ require_relative "config"
 require_relative "session"
 require_relative "session_store"
 require_relative "cursor_store"
+require_relative "timeline_store"
 require_relative "xrpc_client"
 require_relative "handle_resolver"
 require_relative "follows"
@@ -71,9 +72,12 @@ module Tempest
         stream_output: screen.enabled? ? screen : Tempest::REPL::AsyncOutput.new(stdout),
         stream_manager: stream_manager,
         handle_resolver: handle_resolver,
+        timeline_store: timeline_store(env),
       )
 
       begin
+        runner.bootstrap_timeline
+
         if stream_default_on?(argv, env)
           runner.auto_start_stream
         end
@@ -145,6 +149,10 @@ module Tempest
 
     def cursor_store(env)
       Tempest::CursorStore.new(path: Tempest::CursorStore.default_path(env))
+    end
+
+    def timeline_store(env)
+      Tempest::TimelineStore.new(path: Tempest::TimelineStore.default_path(env))
     end
 
     VALID_FEED_MODES = %i[home self].freeze

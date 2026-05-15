@@ -1,3 +1,5 @@
+require "set"
+
 require_relative "../../tempest"
 require_relative "../timeline"
 require_relative "../post"
@@ -21,7 +23,8 @@ module Tempest
       HELP
 
       def initialize(session:, client:, input:, output:, dispatcher: Dispatcher.new,
-                     stream_manager: nil, handle_resolver: nil, stream_output: nil)
+                     stream_manager: nil, handle_resolver: nil, stream_output: nil,
+                     timeline_store: nil)
         @session = session
         @client = client
         @input = input
@@ -30,6 +33,33 @@ module Tempest
         @dispatcher = dispatcher
         @stream_manager = stream_manager
         @handle_resolver = handle_resolver
+        @timeline_store = timeline_store
+      end
+
+      # Replays the cached home timeline, then fetches fresh posts and prints
+      # only those not in the cache. Called once at boot, before
+      # auto_start_stream, so the REPL has content to show before the network
+      # is reached.
+      def bootstrap_timeline
+        return unless @timeline_store
+
+        cached = @timeline_store.load
+        cached_posts = cached ? Array(cached[:posts]) : []
+        cached_posts.each { |post| @output.puts Formatter.post_line(post) }
+
+        cached_uris = cached_posts.map(&:uri).to_set
+        begin
+          fetched = Timeline.fetch(@client)
+        rescue Tempest::Error => e
+          @output.puts "-- timeline fetch failed: #{e.message}"
+          return
+        end
+
+        new_posts = fetched.reject { |post| cached_uris.include?(post.uri) }
+        new_posts.reverse_each { |post| @output.puts Formatter.post_line(post) }
+
+        merged = cached_posts + new_posts.reverse
+        @timeline_store.save(posts: merged)
       end
 
       # Starts the Jetstream feed without printing a status line. Used at boot
@@ -81,6 +111,7 @@ module Tempest
           @output.puts "(empty timeline)"
         else
           posts.reverse_each { |post| @output.puts Formatter.post_line(post) }
+          @timeline_store&.save(posts: posts.reverse)
         end
       rescue Tempest::Error => e
         @output.puts "error: #{e.message}"

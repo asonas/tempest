@@ -318,6 +318,168 @@ class TestREPLRunner < Minitest::Test
     assert middle_idx < newer_idx, "middle should appear before newer"
   end
 
+  class FakeTimelineStore
+    attr_accessor :stored, :saved_payloads
+
+    def initialize(stored: nil)
+      @stored = stored
+      @saved_payloads = []
+    end
+
+    def load
+      @stored
+    end
+
+    def save(posts:, at: Time.now)
+      @saved_payloads << { posts: posts, at: at }
+    end
+  end
+
+  def test_bootstrap_timeline_prints_cached_posts_in_chronological_order
+    cached = [
+      Tempest::Post.new(
+        uri: "at://did:plc:a/app.bsky.feed.post/old1",
+        cid: "bafy-old1", handle: "alice.bsky.social", display_name: nil,
+        text: "older", created_at: "2026-05-14T00:00:00.000Z",
+      ),
+      Tempest::Post.new(
+        uri: "at://did:plc:a/app.bsky.feed.post/old2",
+        cid: "bafy-old2", handle: "alice.bsky.social", display_name: nil,
+        text: "newer", created_at: "2026-05-14T01:00:00.000Z",
+      ),
+    ]
+    store = FakeTimelineStore.new(stored: { posts: cached, saved_at: Time.utc(2026, 5, 14, 1, 5, 0) })
+    client = MultiPostXRPCClient.new
+
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: client,
+      input: StubReader.new([":quit"]),
+      output: @output,
+      timeline_store: store,
+    )
+    runner.bootstrap_timeline
+    runner.run
+
+    out = @output.string
+    older_idx = out.index("older")
+    newer_idx = out.index("newer")
+    refute_nil older_idx
+    refute_nil newer_idx
+    assert older_idx < newer_idx, "cached posts should appear oldest-first"
+  end
+
+  # The first cached uri matches MultiPostXRPCClient's "x" post so the fetch
+  # response overlaps the cache by one entry. Only the strictly newer posts
+  # should be appended.
+  def test_bootstrap_timeline_fetches_and_prints_only_new_posts
+    cached = [
+      Tempest::Post.new(
+        uri: "at://did:plc:a/app.bsky.feed.post/x",
+        cid: "bafyx", handle: "alice.bsky.social", display_name: nil,
+        text: "older", created_at: "2026-05-15T00:00:00.000Z",
+      ),
+    ]
+    store = FakeTimelineStore.new(stored: { posts: cached, saved_at: Time.utc(2026, 5, 15, 0, 5, 0) })
+    client = MultiPostXRPCClient.new
+
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: client,
+      input: StubReader.new([":quit"]),
+      output: @output,
+      timeline_store: store,
+    )
+    runner.bootstrap_timeline
+    runner.run
+
+    out = @output.string
+    assert_equal 1, client.timeline_calls
+
+    # "older" appears once (from cache), "middle" and "newer" appear once each (new).
+    assert_equal 1, out.scan("older").length
+    assert_equal 1, out.scan("middle").length
+    assert_equal 1, out.scan("newer").length
+
+    older_idx  = out.index("older")
+    middle_idx = out.index("middle")
+    newer_idx  = out.index("newer")
+    assert older_idx < middle_idx, "cached posts must precede new posts"
+    assert middle_idx < newer_idx, "new posts must be chronological"
+  end
+
+  def test_bootstrap_timeline_saves_merged_posts_in_chronological_order
+    cached = [
+      Tempest::Post.new(
+        uri: "at://did:plc:a/app.bsky.feed.post/x",
+        cid: "bafyx", handle: "alice.bsky.social", display_name: nil,
+        text: "older", created_at: "2026-05-15T00:00:00.000Z",
+      ),
+    ]
+    store = FakeTimelineStore.new(stored: { posts: cached, saved_at: Time.utc(2026, 5, 15, 0, 5, 0) })
+    client = MultiPostXRPCClient.new
+
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: client,
+      input: StubReader.new([":quit"]),
+      output: @output,
+      timeline_store: store,
+    )
+    runner.bootstrap_timeline
+
+    assert_equal 1, store.saved_payloads.length
+    saved = store.saved_payloads.first[:posts]
+    assert_equal ["older", "middle", "newer"], saved.map(&:text)
+  end
+
+  class FailingTimelineClient
+    def get(*) ; raise Tempest::Error, "boom" ; end
+    def post(*) ; raise "unused" ; end
+  end
+
+  def test_bootstrap_timeline_prints_error_on_fetch_failure_and_keeps_cache
+    cached = [
+      Tempest::Post.new(
+        uri: "at://did:plc:a/app.bsky.feed.post/x",
+        cid: "bafyx", handle: "alice.bsky.social", display_name: nil,
+        text: "older", created_at: "2026-05-15T00:00:00.000Z",
+      ),
+    ]
+    store = FakeTimelineStore.new(stored: { posts: cached, saved_at: Time.utc(2026, 5, 15, 0, 5, 0) })
+
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: FailingTimelineClient.new,
+      input: StubReader.new([":quit"]),
+      output: @output,
+      timeline_store: store,
+    )
+    runner.bootstrap_timeline
+
+    out = @output.string
+    assert_match(/@alice\.bsky\.social: older/, out)
+    assert_match(/^-- timeline fetch failed: boom/, out)
+    assert_equal 0, store.saved_payloads.length
+  end
+
+  def test_timeline_command_saves_fetched_posts_when_store_present
+    store = FakeTimelineStore.new
+    client = MultiPostXRPCClient.new
+
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: client,
+      input: StubReader.new([":timeline", ":quit"]),
+      output: @output,
+      timeline_store: store,
+    )
+    runner.run
+
+    assert_equal 1, store.saved_payloads.length
+    assert_equal ["older", "middle", "newer"], store.saved_payloads.first[:posts].map(&:text)
+  end
+
   def test_stream_status_rendered_with_double_dash_prefix
     require "tempest/jetstream/stream_manager"
     stream = FakeStreamManager.new
