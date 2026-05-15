@@ -23,7 +23,7 @@ class TestREPLFormatter < Minitest::Test
     )
 
     line = Tempest::REPL::Formatter.post_line(post)
-    assert_equal "[01:00] @alice.bsky.social: Hello!", line
+    assert_equal "[10:00] @alice.bsky.social: Hello!", line
   end
 
   def test_post_line_omits_time_when_created_at_is_nil
@@ -85,7 +85,7 @@ class TestREPLFormatter < Minitest::Test
     resolver = StubResolver.new("did:plc:abc" => "alice.bsky.social")
 
     line = Tempest::REPL::Formatter.event_line(event, resolver: resolver)
-    assert_equal "[00:00] @alice.bsky.social: hello stream", line
+    assert_equal "[09:00] @alice.bsky.social: hello stream", line
   end
 
   def test_event_line_falls_back_to_did_when_handle_unknown
@@ -96,7 +96,7 @@ class TestREPLFormatter < Minitest::Test
     )
 
     line = Tempest::REPL::Formatter.event_line(event, resolver: StubResolver.new)
-    assert_equal "[00:00] <did:plc:unknown>: no handle", line
+    assert_equal "[09:00] <did:plc:unknown>: no handle", line
   end
 
   def test_event_line_without_resolver_uses_did

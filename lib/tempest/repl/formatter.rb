@@ -41,7 +41,7 @@ module Tempest
 
       def format_time(iso)
         return nil if iso.nil? || iso.empty?
-        Time.iso8601(iso).strftime("%H:%M")
+        Time.iso8601(iso).localtime.strftime("%H:%M")
       rescue ArgumentError
         nil
       end
