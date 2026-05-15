@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+## Setup
+
+Read [`README.md`](README.md) first and complete the setup steps described there (Ruby version, `bundle install`, credentials in `TEMPEST_IDENTIFIER` / `TEMPEST_APP_PASSWORD`, etc.) before starting any work.
+
 ## Workflow
 
 Before starting any work in this repository:
