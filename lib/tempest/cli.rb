@@ -67,9 +67,10 @@ module Tempest
         begin
           existing.refresh!
           return existing
-        rescue Tempest::Error
+        rescue Tempest::Error => e
           existing.on_change = nil
-          store.clear
+          stdout.puts "[tempest] cached session refresh failed: #{e.message}"
+          stdout.puts "[tempest] cache kept at #{store.path}; falling back to TEMPEST_IDENTIFIER/TEMPEST_APP_PASSWORD"
         end
       end
 
