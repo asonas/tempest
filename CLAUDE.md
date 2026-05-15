@@ -22,6 +22,45 @@ git wt add feature/short-name
 
 Run tests and the development loop inside the worktree, not on `main`.
 
+### Merging a worktree branch into `main`
+
+When asked to merge a worktree branch into `main`, only fast-forward merges are allowed. The history must stay linear.
+
+1. Update local `main` first:
+
+   ```sh
+   git fetch origin
+   git switch main
+   git pull --ff-only origin main
+   ```
+
+2. Verify that the branch is fast-forward-mergeable (i.e. `main` is an ancestor of the branch):
+
+   ```sh
+   git merge-base --is-ancestor main <branch>
+   ```
+
+   Exit code `0` means a fast-forward is possible.
+
+3. If the check fails, the branch is behind `main`. Rebase it before merging:
+
+   ```sh
+   git switch <branch>
+   git rebase main
+   ```
+
+   Then repeat step 2.
+
+4. Merge with `--ff-only` so a non-fast-forward attempt fails loudly instead of creating a merge commit:
+
+   ```sh
+   git switch main
+   git merge --ff-only <branch>
+   ```
+
+If `--ff-only` refuses, stop and report it. Do not fall back to a regular merge commit without confirmation.
+
+
 ## Running tests
 
 The project uses Minitest, wired through Rake. From the repository root (inside the worktree):
