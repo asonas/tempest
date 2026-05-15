@@ -1,0 +1,4 @@
+#!/usr/bin/env ruby
+require_relative "../lib/tempest/cli"
+
+exit Tempest::CLI.run
