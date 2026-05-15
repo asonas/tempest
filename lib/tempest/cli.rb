@@ -2,6 +2,8 @@ require_relative "../tempest"
 require_relative "config"
 require_relative "session"
 require_relative "xrpc_client"
+require_relative "jetstream/client"
+require_relative "jetstream/stream_manager"
 require_relative "repl/runner"
 
 module Tempest
@@ -25,6 +27,12 @@ module Tempest
       client = Tempest::XRPCClient.new(session)
       input = RelineReader.new
 
+      jetstream_client = Tempest::Jetstream::Client.new(
+        wanted_collections: ["app.bsky.feed.post"],
+        wanted_dids: [session.did],
+      )
+      stream_manager = Tempest::Jetstream::StreamManager.new(client: jetstream_client)
+
       stdout.puts "tempest #{Tempest::VERSION} — signed in as @#{session.handle}"
       stdout.puts "Type :help for commands, :quit to exit."
 
@@ -33,6 +41,7 @@ module Tempest
         client: client,
         input: input,
         output: stdout,
+        stream_manager: stream_manager,
       ).run
       0
     rescue Tempest::Config::MissingValue => e

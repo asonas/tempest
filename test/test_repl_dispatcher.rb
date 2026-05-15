@@ -43,4 +43,22 @@ class TestREPLDispatcher < Minitest::Test
     assert_equal :unknown, cmd.name
     assert_equal ["nonexistent"], cmd.args
   end
+
+  def test_colon_stream_on_returns_stream_command_with_arg
+    cmd = @dispatcher.dispatch(":stream on")
+    assert_equal :stream, cmd.name
+    assert_equal ["on"], cmd.args
+  end
+
+  def test_colon_stream_off_returns_stream_command_with_arg
+    cmd = @dispatcher.dispatch(":stream off")
+    assert_equal :stream, cmd.name
+    assert_equal ["off"], cmd.args
+  end
+
+  def test_colon_stream_without_arg_returns_stream_command_with_empty_args
+    cmd = @dispatcher.dispatch(":stream")
+    assert_equal :stream, cmd.name
+    assert_equal [], cmd.args
+  end
 end

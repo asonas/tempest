@@ -5,7 +5,7 @@ module Tempest
     Command = Data.define(:name, :args)
 
     class Dispatcher
-      KNOWN_COMMANDS = %i[timeline quit help].freeze
+      KNOWN_COMMANDS = %i[timeline quit help stream].freeze
 
       def dispatch(input)
         return Command.new(name: :quit, args: []) if input.nil?
@@ -14,7 +14,7 @@ module Tempest
         return Command.new(name: :noop, args: []) if stripped.empty?
 
         if stripped.start_with?(":")
-          name, *rest = stripped[1..].split(/\s+/, 2)
+          name, *rest = stripped[1..].split(/\s+/)
           symbol = name.to_sym
           if KNOWN_COMMANDS.include?(symbol)
             Command.new(name: symbol, args: rest)

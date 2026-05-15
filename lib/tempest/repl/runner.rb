@@ -1,6 +1,7 @@
 require_relative "../../tempest"
 require_relative "../timeline"
 require_relative "../post"
+require_relative "../jetstream/stream_manager"
 require_relative "dispatcher"
 require_relative "formatter"
 
@@ -11,19 +12,21 @@ module Tempest
 
       HELP_TEXT = <<~HELP
         Available commands:
-          :timeline   Fetch and print the home timeline
-          :help       Show this help
-          :quit       Exit tempest (or Ctrl-D)
+          :timeline       Fetch and print the home timeline
+          :stream on|off  Toggle the Jetstream live feed
+          :help           Show this help
+          :quit           Exit tempest (or Ctrl-D)
 
         Any other input is sent as a new post.
       HELP
 
-      def initialize(session:, client:, input:, output:, dispatcher: Dispatcher.new)
+      def initialize(session:, client:, input:, output:, dispatcher: Dispatcher.new, stream_manager: nil)
         @session = session
         @client = client
         @input = input
         @output = output
         @dispatcher = dispatcher
+        @stream_manager = stream_manager
       end
 
       def run
@@ -33,6 +36,7 @@ module Tempest
 
           case command.name
           when :quit
+            @stream_manager&.stop
             @output.puts "bye."
             break
           when :noop
@@ -41,6 +45,8 @@ module Tempest
             @output.puts HELP_TEXT
           when :timeline
             handle_timeline
+          when :stream
+            handle_stream(command.args.first)
           when :post
             handle_post(command.args.first)
           when :unknown
@@ -73,6 +79,38 @@ module Tempest
         @output.puts "posted: #{response["uri"]}"
       rescue Tempest::Error => e
         @output.puts "error: #{e.message}"
+      end
+
+      def handle_stream(arg)
+        if @stream_manager.nil?
+          @output.puts "stream is not available in this session"
+          return
+        end
+
+        case arg
+        when nil, "on"
+          if @stream_manager.running?
+            @output.puts "stream is already on"
+          else
+            @stream_manager.start { |event| handle_stream_event(event) }
+            @output.puts "stream on"
+          end
+        when "off"
+          @stream_manager.stop
+          @output.puts "stream off"
+        else
+          @output.puts "usage: :stream on|off"
+        end
+      end
+
+      def handle_stream_event(event)
+        if event.is_a?(Tempest::Jetstream::StreamError)
+          @output.puts "[stream] error: #{event.cause.class}: #{event.cause.message}"
+          return
+        end
+        return unless event.respond_to?(:post?) && event.post? && event.create?
+
+        @output.puts Formatter.event_line(event)
       end
     end
   end

@@ -18,4 +18,6 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency "base64", "~> 0.2"
   spec.add_dependency "reline", "~> 0.6"
+  spec.add_dependency "async", "~> 2.21"
+  spec.add_dependency "async-websocket", "~> 0.28"
 end

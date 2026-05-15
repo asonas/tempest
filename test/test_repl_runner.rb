@@ -112,4 +112,119 @@ class TestREPLRunner < Minitest::Test
     out = run_with(["", "   ", ":quit"])
     refute_match(/posted/i, out.sub(out_before, ""))
   end
+
+  class FakeStreamManager
+    attr_reader :start_calls, :stop_calls
+    attr_accessor :running
+
+    def initialize
+      @start_calls = 0
+      @stop_calls = 0
+      @running = false
+      @on_event = nil
+    end
+
+    def start(&block)
+      @start_calls += 1
+      @running = true
+      @on_event = block
+    end
+
+    def stop
+      @stop_calls += 1
+      @running = false
+    end
+
+    def running?
+      @running
+    end
+
+    def emit(event)
+      @on_event&.call(event)
+    end
+  end
+
+  def run_with_stream(inputs, stream_manager:)
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: StubReader.new(inputs),
+      output: @output,
+      stream_manager: stream_manager,
+    )
+    runner.run
+    @output.string
+  end
+
+  def test_stream_on_starts_manager
+    stream = FakeStreamManager.new
+    out = run_with_stream([":stream on", ":quit"], stream_manager: stream)
+
+    assert_equal 1, stream.start_calls
+    assert_equal 1, stream.stop_calls # :quit triggers stop
+    assert_match(/stream on/, out)
+  end
+
+  def test_stream_off_stops_manager
+    stream = FakeStreamManager.new
+    stream.running = true
+    out = run_with_stream([":stream off", ":quit"], stream_manager: stream)
+
+    assert stream.stop_calls >= 1
+    assert_match(/stream off/, out)
+  end
+
+  def test_stream_on_when_already_running_says_so
+    stream = FakeStreamManager.new
+    stream.running = true
+    out = run_with_stream([":stream on", ":quit"], stream_manager: stream)
+
+    assert_equal 0, stream.start_calls
+    assert_match(/already on/, out)
+  end
+
+  def test_stream_event_printed_via_formatter
+    require "tempest/jetstream/decoder"
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:x", time_us: 1,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "r", cid: nil, text: "hello stream", created_at: "2026-01-01T00:00:00Z",
+    )
+
+    stream = FakeStreamManager.new
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: StubReader.new([":stream on", ":quit"]),
+      output: @output,
+      stream_manager: stream,
+    )
+
+    # Drive the run loop; :stream on registers callback, then we emit, then :quit
+    inputs = [":stream on", ":quit"]
+    reader = Class.new do
+      def initialize(inputs, stream, event)
+        @inputs = inputs.dup
+        @stream = stream
+        @event = event
+      end
+
+      def readline(_prompt)
+        line = @inputs.shift
+        # After the stream is enabled, push an event before processing :quit
+        @stream.emit(@event) if line == ":quit"
+        line
+      end
+    end.new(inputs, stream, event)
+
+    Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: reader,
+      output: @output,
+      stream_manager: stream,
+    ).run
+
+    assert_match(/\[stream\] <did:plc:x> hello stream/, @output.string)
+  end
 end
