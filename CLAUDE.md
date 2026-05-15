@@ -17,3 +17,32 @@ git wt add feature/short-name
 ```
 
 Run tests and the development loop inside the worktree, not on `main`.
+
+## Running tests
+
+The project uses Minitest, wired through Rake. From the repository root (inside the worktree):
+
+```sh
+bundle exec rake test
+```
+
+Equivalent shortcut:
+
+```sh
+bundle exec rake
+```
+
+To run a single test file:
+
+```sh
+bundle exec ruby -Ilib -Itest test/test_<name>.rb
+```
+
+To run a single test method, pass `-n`:
+
+```sh
+bundle exec ruby -Ilib -Itest test/test_<name>.rb -n test_<method>
+```
+
+All tests must pass before committing.
+
