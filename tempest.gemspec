@@ -15,4 +15,6 @@ Gem::Specification.new do |spec|
   spec.bindir = "exe"
   spec.executables = ["tempest"]
   spec.require_paths = ["lib"]
+
+  spec.add_dependency "base64", "~> 0.2"
 end
