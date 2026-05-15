@@ -50,3 +50,50 @@ bundle exec ruby -Ilib -Itest test/test_<name>.rb -n test_<method>
 
 All tests must pass before committing.
 
+## Architecture
+
+`tempest` is a terminal Bluesky client that speaks the AT Protocol directly. It does not use any third-party Bluesky SDK; HTTP and WebSocket are wired by hand.
+
+### External protocols and services
+
+- **AT Protocol** — the underlying federated protocol. See <https://atproto.com/> and the spec index at <https://atproto.com/specs>.
+- **XRPC** — AT Protocol's HTTP-based RPC convention. `tempest` calls endpoints under `https://bsky.social/xrpc/<nsid>` such as `com.atproto.server.createSession`, `com.atproto.server.refreshSession`, `com.atproto.repo.createRecord`, `app.bsky.feed.getTimeline`, `app.bsky.graph.getFollows`, `app.bsky.actor.getProfile`.
+- **Jetstream** — Bluesky's JSON firehose over WebSocket. Public endpoints are listed at <https://github.com/bluesky-social/jetstream>. Cursors are unix-microseconds (`time_us`) and the default replay window on public instances is 24 hours; `StreamManager` uses a conservative 12-hour cutoff and falls back to `getTimeline` for longer gaps.
+- **Bluesky lexicons** (record schemas, NSIDs): <https://github.com/bluesky-social/atproto/tree/main/lexicons>
+- **Bluesky API reference**: <https://docs.bsky.app/>
+
+### Component map
+
+Transport and domain:
+
+- `Tempest::HTTP` — minimal HTTP/JSON wrapper.
+- `Tempest::Session` / `Tempest::SessionStore` — JWT auth, refresh, on-disk session cache.
+- `Tempest::XRPCClient` — calls XRPC endpoints with automatic 401-refresh-retry.
+- `Tempest::Timeline` / `Tempest::Post` / `Tempest::Follows` — typed wrappers around the XRPC responses.
+- `Tempest::HandleResolver` — DID → handle cache (uses `app.bsky.actor.getProfile`, seeded from follows at startup).
+- `Tempest::CursorStore` / `Tempest::TimelineStore` — disk persistence for the last seen `time_us` and a 50-post timeline snapshot.
+
+Jetstream live feed:
+
+- `Tempest::Jetstream::Client` — WebSocket consumer; builds the subscription URL with `wantedCollections` / `wantedDids` / `cursor`.
+- `Tempest::Jetstream::Decoder` — JSON → `Event`.
+- `Tempest::Jetstream::Subscription` — decides between server-side `wantedDids` filtering and firehose + client-side filtering, based on Jetstream's 10 000-DID cap.
+- `Tempest::Jetstream::StreamManager` — runs the consumer in a background thread, reconnects with cursor preservation, applies exponential backoff, emits `StreamStatus` lifecycle events, and throttles cursor persistence.
+
+REPL and CLI:
+
+- `Tempest::REPL::Runner` — main REPL loop, command dispatch, timeline bootstrap, stream event rendering.
+- `Tempest::REPL::Screen` — earthquake-style split layout via DECSTBM (scrolling region above, prompt fixed at the bottom). Writes are mutex-serialized so background Jetstream events and synchronous REPL output do not interleave their ANSI sequences.
+- `Tempest::REPL::Formatter` — single-line formatting for posts, events, and status lines.
+- `Tempest::REPL::Dispatcher` — input string → command.
+- `Tempest::REPL::AsyncOutput` — Reline-aware output wrapper used when the split-screen `Screen` is not enabled.
+- `Tempest::CLI` — startup orchestration: sign-in, `--feed=home|self` selection, follows fetch, subscription plan, wiring everything together, then `runner.bootstrap_timeline` → `runner.auto_start_stream` → `runner.run`.
+
+### Runtime flow at a glance
+
+1. `Tempest::CLI.run` signs in (reusing the cached session if possible) and constructs the XRPC client.
+2. `build_subscription` chooses between `:self` (own DID only) and `:home` (own DID + follows); when follows exceed Jetstream's `wantedDids` cap, the plan switches to firehose mode plus a client-side filter.
+3. `StreamManager` is started in a background thread. It loads any persisted cursor, reconnects with that cursor on disconnect/error, and emits `StreamStatus(:disconnected/:reconnecting/:live/:gapped)` so the `Runner` can render status lines.
+4. The `Runner` first replays the on-disk timeline snapshot, then fetches `getTimeline` for the diff, then enters the REPL.
+
+
