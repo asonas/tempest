@@ -17,6 +17,7 @@ module Tempest
         @io = io
         @rows = rows
         @enabled = false
+        @mutex = Mutex.new
       end
 
       def enable
@@ -43,18 +44,20 @@ module Tempest
       end
 
       def puts(*lines)
-        if @enabled
-          flat = lines.empty? ? [""] : lines.flat_map { |l| l.to_s.split("\n") }
-          flat.each { |line| insert_above_prompt(line) }
-        else
-          # Best-effort write that doesn't shred the prompt when we don't have
-          # a scrolling region in place. Reline rerender is invoked by
-          # AsyncOutput; Screen itself stays neutral here.
-          (lines.empty? ? [""] : lines).each do |line|
-            @io.print "\r\e[2K"
-            @io.puts line
+        @mutex.synchronize do
+          if @enabled
+            flat = lines.empty? ? [""] : lines.flat_map { |l| l.to_s.split("\n") }
+            flat.each { |line| insert_above_prompt(line) }
+          else
+            # Best-effort write that doesn't shred the prompt when we don't have
+            # a scrolling region in place. Reline rerender is invoked by
+            # AsyncOutput; Screen itself stays neutral here.
+            (lines.empty? ? [""] : lines).each do |line|
+              @io.print "\r\e[2K"
+              @io.puts line
+            end
+            @io.flush if @io.respond_to?(:flush)
           end
-          @io.flush if @io.respond_to?(:flush)
         end
         rerender_prompt
       end
