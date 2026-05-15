@@ -27,10 +27,27 @@
 - [x] Formatter が Post を `@handle: text` 形式に整形する
 - [x] exe/tempest が Config を読み Session を確立し REPL を起動する
 
+### Milestone 4: Jetstream 再接続とオフライン差分復旧
+- [x] `Jetstream::Client#subscribe_url(cursor: n)` が `cursor=n` を URL に含める
+- [x] `Jetstream::Client#subscribe_url(cursor: nil)` は `cursor` を含めない
+- [x] `Jetstream::Client#each_event(cursor:)` が cursor を transport に渡す
+- [x] `StreamManager` は yielded event の `time_us` を最新値として保持する
+- [x] `StreamManager` は `each_event` が正常終了したら保持した cursor で再接続する
+- [x] `StreamManager` は `each_event` が例外で終わっても再接続する
+- [x] 切断時に `StreamStatus(state: :disconnected, reason:)` を on_event に流す
+- [x] 再接続前に `StreamStatus(state: :reconnecting)` を on_event に流す
+- [x] 再接続成功（最初のイベント受信）で `StreamStatus(state: :live)` を on_event に流す
+- [x] 再接続は指数的 backoff（1, 2, 5, 10, 30 秒上限）を持つ
+- [x] `StreamManager#stop` は backoff 中でもループを抜ける
+- [x] 切断時間が cursor 保持窓を超えたら `StreamStatus(state: :gapped, since:)` を出してから cursor なしで再接続する
+- [x] `Runner#handle_stream_event` が `StreamStatus` を `-- <text>` 行で画面に出す
+- [x] `Runner` が `:gapped` を受け取ったら `Timeline.fetch` を呼び結果を時系列の古い順に画面に流す
+
 ## 後回し（最初のマイルストーン完了後に着手）
-- Jetstream 接続と画面ストリーム（async-websocket）
 - Ractor 化（CBOR デコードや高頻度フィルタ評価などの CPU 仕事）
 - HTTP 層の persistent 化（minisky 採用見直し、async-http への置き換え検討）
 - プラグイン拡張（Ruby::Box は実験フラグ前提なので慎重に）
 - 投稿のリプライ / メンション / 画像添付など lexicon 拡張
 - タイムラインの cursor ベースのページング
+- cursor のディスク永続化（プロセス再起動越しの差分復旧）
+- フォロー先 DID を `wantedDids` に並べたホームフィード相当の live stream

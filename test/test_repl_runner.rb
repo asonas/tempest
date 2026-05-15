@@ -227,4 +227,127 @@ class TestREPLRunner < Minitest::Test
 
     assert_match(/<did:plc:x>: hello stream/, @output.string)
   end
+
+  # Drives the runner with a reader that injects stream callbacks between input
+  # reads, so we can simulate the manager pushing StreamStatus events at well-
+  # defined moments.
+  class EmittingReader
+    def initialize(steps)
+      @steps = steps.dup
+    end
+
+    def readline(_prompt)
+      step = @steps.shift
+      return nil if step.nil?
+      step[:emit]&.call
+      step[:line]
+    end
+  end
+
+  class MultiPostXRPCClient
+    attr_reader :timeline_calls
+
+    def initialize
+      @timeline_calls = 0
+    end
+
+    def get(nsid, query: nil)
+      raise "unexpected nsid #{nsid}" unless nsid == "app.bsky.feed.getTimeline"
+      @timeline_calls += 1
+      {
+        "feed" => [
+          {"post" => post_view("z", "newer", "2026-05-15T02:00:00.000Z")},
+          {"post" => post_view("y", "middle", "2026-05-15T01:00:00.000Z")},
+          {"post" => post_view("x", "older",  "2026-05-15T00:00:00.000Z")},
+        ],
+      }
+    end
+
+    def post(*) ; {} ; end
+
+    private
+
+    def post_view(rkey, text, created_at)
+      {
+        "uri" => "at://did:plc:a/app.bsky.feed.post/#{rkey}",
+        "cid" => "bafy#{rkey}",
+        "author" => { "handle" => "alice.bsky.social" },
+        "record" => { "text" => text, "createdAt" => created_at },
+      }
+    end
+  end
+
+  def test_gapped_status_triggers_timeline_backfill_in_chronological_order
+    require "tempest/jetstream/stream_manager"
+    stream = FakeStreamManager.new
+    client = MultiPostXRPCClient.new
+
+    steps = [
+      { line: ":stream on" },
+      {
+        emit: -> {
+          stream.emit(Tempest::Jetstream::StreamStatus.new(
+            state: :gapped, since: Time.utc(2026, 5, 14, 12, 0, 0),
+          ))
+        },
+        line: ":quit",
+      },
+    ]
+
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: client,
+      input: EmittingReader.new(steps),
+      output: @output,
+      stream_manager: stream,
+    )
+    runner.run
+
+    out = @output.string
+    assert_equal 1, client.timeline_calls
+    assert_match(/^-- fetching timeline/, out)
+
+    # Posts must appear oldest-first below the status line.
+    older_idx  = out.index("older")
+    middle_idx = out.index("middle")
+    newer_idx  = out.index("newer")
+    refute_nil older_idx
+    refute_nil middle_idx
+    refute_nil newer_idx
+    assert older_idx < middle_idx, "older should appear before middle"
+    assert middle_idx < newer_idx, "middle should appear before newer"
+  end
+
+  def test_stream_status_rendered_with_double_dash_prefix
+    require "tempest/jetstream/stream_manager"
+    stream = FakeStreamManager.new
+
+    steps = [
+      { line: ":stream on" },
+      {
+        emit: -> {
+          stream.emit(Tempest::Jetstream::StreamStatus.new(
+            state: :disconnected, reason: :closed,
+          ))
+          stream.emit(Tempest::Jetstream::StreamStatus.new(state: :reconnecting))
+          stream.emit(Tempest::Jetstream::StreamStatus.new(state: :live))
+        },
+        line: ":quit",
+      },
+    ]
+
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: EmittingReader.new(steps),
+      output: @output,
+      stream_manager: stream,
+    )
+    runner.run
+
+    out = @output.string
+    assert_match(/^-- disconnected/, out)
+    assert_match(/^-- reconnecting/, out)
+    assert_match(/^-- live/, out)
+  end
 end

@@ -25,6 +25,26 @@ module Tempest
         compose(format_time(post.created_at), post.handle, nil, squeeze(post.text))
       end
 
+      def status_line(status)
+        body = case status.state
+        when :disconnected
+          status.reason == :error && status.error ? "disconnected: #{status.error.message}" : "disconnected"
+        when :reconnecting
+          "reconnecting..."
+        when :live
+          "live"
+        when :gapped
+          "fetching timeline (offline since #{format_status_time(status.since)})"
+        else
+          status.state.to_s
+        end
+        Formatter.color ? "#{DIM}-- #{body}#{RESET}" : "-- #{body}"
+      end
+
+      def format_status_time(time)
+        time.respond_to?(:localtime) ? time.localtime.strftime("%H:%M") : time.to_s
+      end
+
       def event_line(event, resolver: nil)
         handle = resolver&.resolve(event.did)
         body = if event.operation == :delete

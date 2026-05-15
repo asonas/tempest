@@ -116,13 +116,27 @@ module Tempest
       end
 
       def handle_stream_event(event)
-        if event.is_a?(Tempest::Jetstream::StreamError)
+        case event
+        when Tempest::Jetstream::StreamError
           @stream_output.puts "stream error: #{event.cause.class}: #{event.cause.message}"
-          return
-        end
-        return unless event.respond_to?(:post?) && event.post? && event.create?
+        when Tempest::Jetstream::StreamStatus
+          @stream_output.puts Formatter.status_line(event)
+          backfill_timeline if event.state == :gapped
+        else
+          return unless event.respond_to?(:post?) && event.post? && event.create?
 
-        @stream_output.puts Formatter.event_line(event, resolver: @handle_resolver)
+          @stream_output.puts Formatter.event_line(event, resolver: @handle_resolver)
+        end
+      end
+
+      # Pulls the home feed and replays it in chronological order so the gap is
+      # filled below the "-- fetching timeline" status line. Errors are swallowed
+      # to a single status line — a failed backfill must not kill the live feed.
+      def backfill_timeline
+        posts = Timeline.fetch(@client)
+        posts.reverse_each { |post| @stream_output.puts Formatter.post_line(post) }
+      rescue Tempest::Error => e
+        @stream_output.puts "-- timeline backfill failed: #{e.message}"
       end
     end
   end

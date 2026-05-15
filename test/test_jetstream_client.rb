@@ -35,6 +35,26 @@ class TestJetstreamClient < Minitest::Test
     assert_includes url, "wantedDids=did%3Aplc%3Ab"
   end
 
+  def test_subscribe_url_includes_cursor_when_given
+    client = Tempest::Jetstream::Client.new(
+      url: "wss://jetstream2.us-east.bsky.network/subscribe",
+      wanted_collections: ["app.bsky.feed.post"],
+    )
+
+    url = client.subscribe_url(cursor: 1_725_519_626_134_432)
+    assert_includes url, "cursor=1725519626134432"
+  end
+
+  def test_subscribe_url_omits_cursor_when_nil
+    client = Tempest::Jetstream::Client.new(
+      url: "wss://jetstream2.us-east.bsky.network/subscribe",
+      wanted_collections: ["app.bsky.feed.post"],
+    )
+
+    url = client.subscribe_url(cursor: nil)
+    refute_includes url, "cursor"
+  end
+
   def test_each_event_yields_decoded_events
     payload = JSON.generate(
       did: "did:plc:x",
@@ -62,5 +82,18 @@ class TestJetstreamClient < Minitest::Test
     assert_equal "wss://example.test/subscribe?wantedCollections=app.bsky.feed.post", transport.opened_url
     assert_equal 1, events.length
     assert_equal "hello", events.first.text
+  end
+
+  def test_each_event_passes_cursor_through_to_transport
+    transport = StubTransport.new([])
+    client = Tempest::Jetstream::Client.new(
+      url: "wss://example.test/subscribe",
+      wanted_collections: ["app.bsky.feed.post"],
+      transport: transport,
+    )
+
+    client.each_event(cursor: 1_725_519_626_134_432) { |_| }
+
+    assert_includes transport.opened_url, "cursor=1725519626134432"
   end
 end

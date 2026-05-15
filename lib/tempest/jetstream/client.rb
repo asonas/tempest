@@ -16,10 +16,11 @@ module Tempest
         @transport = transport
       end
 
-      def subscribe_url
+      def subscribe_url(cursor: nil)
         params = []
         @wanted_collections.each { |c| params << ["wantedCollections", c] }
         @wanted_dids.each { |d| params << ["wantedDids", d] }
+        params << ["cursor", cursor.to_s] if cursor
         return @url if params.empty?
 
         uri = URI(@url)
@@ -28,10 +29,10 @@ module Tempest
         uri.to_s
       end
 
-      def each_event(&block)
-        return enum_for(:each_event) unless block
+      def each_event(cursor: nil, &block)
+        return enum_for(:each_event, cursor: cursor) unless block
 
-        transport.each_message(subscribe_url) do |raw|
+        transport.each_message(subscribe_url(cursor: cursor)) do |raw|
           event = @decoder.decode(raw)
           yield event if event
         end
