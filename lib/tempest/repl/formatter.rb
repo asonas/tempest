@@ -13,6 +13,11 @@ module Tempest
       CYAN = "\e[36m".freeze
       GREEN = "\e[32m".freeze
       DIM = "\e[2m".freeze
+      HASHTAG_BLUE = "\e[38;5;110m".freeze
+
+      HASHTAG_PATTERN = /#[[:alnum:]_]+/.freeze
+      URL_PATTERN = %r{https?://[^\s]+}.freeze
+      DECORATE_PATTERN = Regexp.union(URL_PATTERN, HASHTAG_PATTERN).freeze
 
       class << self
         attr_accessor :color
@@ -22,7 +27,17 @@ module Tempest
       module_function
 
       def post_line(post)
-        compose(format_time(post.created_at), post.handle, nil, squeeze(post.text))
+        compose(format_time(post.created_at), post.handle, nil, decorate_body(squeeze(post.text)))
+      end
+
+      def decorate_body(text)
+        return text unless Formatter.color
+        return text if text.nil? || text.empty?
+
+        text.gsub(DECORATE_PATTERN) do |match|
+          color = match.start_with?("http") ? DIM : HASHTAG_BLUE
+          "#{color}#{match}#{RESET}"
+        end
       end
 
       def status_line(status)
@@ -54,7 +69,7 @@ module Tempest
         elsif event.respond_to?(:repost?) && event.repost?
           "reposted #{subject_owner_label(event.subject_uri, resolver)}"
         else
-          squeeze(event.text)
+          decorate_body(squeeze(event.text))
         end
         compose(format_time(event.created_at), handle, event.did, body)
       end

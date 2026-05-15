@@ -159,6 +159,64 @@ class TestREPLFormatter < Minitest::Test
     assert_equal "@alice.bsky.social: liked <did:plc:target>'s post", line
   end
 
+  def test_decorate_body_returns_plain_text_when_color_is_off
+    text = "check #ruby at https://example.com"
+    assert_equal text, Tempest::REPL::Formatter.decorate_body(text)
+  end
+
+  def test_decorate_body_wraps_hashtags_in_muted_blue_when_color_is_on
+    Tempest::REPL::Formatter.color = true
+    decorated = Tempest::REPL::Formatter.decorate_body("hello #ruby world")
+    assert_equal "hello \e[38;5;110m#ruby\e[0m world", decorated
+  end
+
+  def test_decorate_body_wraps_urls_in_dim_when_color_is_on
+    Tempest::REPL::Formatter.color = true
+    decorated = Tempest::REPL::Formatter.decorate_body("see https://example.com now")
+    assert_equal "see \e[2mhttps://example.com\e[0m now", decorated
+  end
+
+  def test_decorate_body_handles_multiple_hashtags
+    Tempest::REPL::Formatter.color = true
+    decorated = Tempest::REPL::Formatter.decorate_body("#a and #b")
+    assert_equal "\e[38;5;110m#a\e[0m and \e[38;5;110m#b\e[0m", decorated
+  end
+
+  def test_decorate_body_does_not_treat_url_fragment_as_hashtag
+    Tempest::REPL::Formatter.color = true
+    decorated = Tempest::REPL::Formatter.decorate_body("see https://example.com/page#section now")
+    assert_equal "see \e[2mhttps://example.com/page#section\e[0m now", decorated
+  end
+
+  def test_decorate_body_handles_hashtag_and_url_together
+    Tempest::REPL::Formatter.color = true
+    decorated = Tempest::REPL::Formatter.decorate_body("#ruby https://example.com")
+    assert_equal "\e[38;5;110m#ruby\e[0m \e[2mhttps://example.com\e[0m", decorated
+  end
+
+  def test_event_line_decorates_hashtag_in_post_body_when_color_is_on
+    Tempest::REPL::Formatter.color = true
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:abc", time_us: 1,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "r", cid: nil, text: "see #ruby", created_at: nil,
+    )
+
+    line = Tempest::REPL::Formatter.event_line(event)
+    assert_includes line, "\e[38;5;110m#ruby\e[0m"
+  end
+
+  def test_post_line_decorates_hashtag_when_color_is_on
+    Tempest::REPL::Formatter.color = true
+    post = Tempest::Post.new(
+      uri: "at://x", cid: "bafy", handle: "alice.bsky.social",
+      display_name: nil, text: "#ruby", created_at: nil,
+    )
+
+    line = Tempest::REPL::Formatter.post_line(post)
+    assert_includes line, "\e[38;5;110m#ruby\e[0m"
+  end
+
   def test_event_line_for_like_without_subject_uri_renders_generic_message
     event = Tempest::Jetstream::Event.new(
       kind: :commit, did: "did:plc:actor", time_us: 1,
