@@ -59,10 +59,15 @@ module Tempest
       response = Tempest::HTTP.post_json(
         url,
         headers: { "Authorization" => "Bearer #{@refresh_jwt}" },
-        body: {},
       )
 
-      raise AuthenticationError, "refreshSession failed (#{response.status})" unless response.ok?
+      unless response.ok?
+        details = response.body.is_a?(Hash) ? response.body : {}
+        raise AuthenticationError.new(
+          "refreshSession failed (#{response.status}): #{details["message"] || response.body.inspect}",
+          code: details["error"],
+        )
+      end
 
       @access_jwt = response.body.fetch("accessJwt")
       @refresh_jwt = response.body.fetch("refreshJwt")
