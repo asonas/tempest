@@ -5,8 +5,10 @@ require_relative "session_store"
 require_relative "cursor_store"
 require_relative "xrpc_client"
 require_relative "handle_resolver"
+require_relative "follows"
 require_relative "jetstream/client"
 require_relative "jetstream/stream_manager"
+require_relative "jetstream/subscription"
 require_relative "repl/runner"
 require_relative "repl/formatter"
 require_relative "repl/async_output"
@@ -36,17 +38,24 @@ module Tempest
       client = Tempest::XRPCClient.new(session)
       input = RelineReader.new
 
+      handle_resolver = Tempest::HandleResolver.new(client: client)
+      handle_resolver.seed(session.did, session.handle)
+
+      mode = feed_mode(argv: argv, env: env)
+      plan = build_subscription(
+        mode: mode, session: session, client: client,
+        handle_resolver: handle_resolver, stdout: stdout,
+      )
+
       jetstream_client = Tempest::Jetstream::Client.new(
         wanted_collections: ["app.bsky.feed.post"],
-        wanted_dids: [session.did],
+        wanted_dids: plan.wanted_dids,
       )
       stream_manager = Tempest::Jetstream::StreamManager.new(
         client: jetstream_client,
         cursor_store: cursor_store(env),
+        filter: plan.filter,
       )
-
-      handle_resolver = Tempest::HandleResolver.new(client: client)
-      handle_resolver.seed(session.did, session.handle)
 
       stdout.puts "tempest #{Tempest::VERSION} — signed in as @#{session.handle}"
       stdout.puts "Type :help for commands, :quit to exit."
@@ -138,6 +147,45 @@ module Tempest
       Tempest::CursorStore.new(path: Tempest::CursorStore.default_path(env))
     end
 
+    VALID_FEED_MODES = %i[home self].freeze
+
+    def feed_mode(argv:, env: {})
+      flag = argv.find { |a| a.start_with?("--feed=") }&.split("=", 2)&.last
+      raw = flag || env["TEMPEST_FEED"] || "home"
+
+      mode = raw.to_sym
+      raise ArgumentError, "invalid --feed value: #{raw.inspect} (must be home|self)" \
+        unless VALID_FEED_MODES.include?(mode)
+      mode
+    end
+
+    # Decides what the Jetstream subscription should look like for a freshly
+    # signed-in session. In :self mode we only watch the user's own DID (the
+    # historical earthquake-style "echo my posts" UX). In :home mode we fetch
+    # the user's follows from AppView and let Subscription decide between
+    # server-side wantedDids filtering and a firehose+client-filter fallback.
+    # When a handle_resolver is provided, follow handles are seeded so the
+    # live feed can render @handle without an extra getProfile roundtrip.
+    def build_subscription(mode:, session:, client:, handle_resolver: nil, stdout: nil)
+      case mode
+      when :self
+        Tempest::Jetstream::Plan.new(wanted_dids: [session.did], filter: nil)
+      when :home
+        stdout&.puts "[tempest] fetching follows..."
+        follows = Tempest::Follows.fetch(client, actor: session.did)
+        follows.each { |f| handle_resolver&.seed(f[:did], f[:handle]) }
+        plan = Tempest::Jetstream::Subscription.build(self_did: session.did, follows: follows)
+        if plan.filter
+          stdout&.puts "[tempest] following #{follows.length} accounts (exceeds 10000 cap; using firehose+client-filter)"
+        else
+          stdout&.puts "[tempest] following #{follows.length} accounts"
+        end
+        plan
+      else
+        raise ArgumentError, "unknown feed mode: #{mode.inspect}"
+      end
+    end
+
     def attach_store(session, store, identifier)
       session.identifier ||= identifier
       session.on_change = ->(s) { store.save(s, identifier: s.identifier || identifier) }
@@ -151,6 +199,9 @@ module Tempest
           -h, --help       Show this help
           -v, --version    Show version
           --no-stream      Disable the auto-started Jetstream feed
+          --feed=MODE      Choose what the live feed subscribes to:
+                             home  (default) Your follows + your own posts
+                             self  Only your own posts (legacy echo mode)
 
         Environment (required only when no cached session is available):
           TEMPEST_IDENTIFIER     Your handle (e.g. asonas.bsky.social)
@@ -167,6 +218,7 @@ module Tempest
           TEMPEST_CURSOR_PATH    Override the Jetstream cursor cache path (default:
                                  $XDG_CONFIG_HOME/tempest/cursor.json). Holds the last-seen
                                  time_us so a restart can replay missed events.
+          TEMPEST_FEED           "home" (default) or "self"; equivalent to --feed.
       HELP
     end
 

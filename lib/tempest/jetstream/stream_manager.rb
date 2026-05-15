@@ -23,13 +23,15 @@ module Tempest
 
       def initialize(client:, backoff: DEFAULT_BACKOFF, sleeper: ->(s) { sleep(s) },
                      clock: -> { Time.now }, cursor_store: nil,
-                     cursor_save_interval: DEFAULT_CURSOR_SAVE_INTERVAL)
+                     cursor_save_interval: DEFAULT_CURSOR_SAVE_INTERVAL,
+                     filter: nil)
         @client = client
         @backoff = backoff
         @sleeper = sleeper
         @clock = clock
         @cursor_store = cursor_store
         @cursor_save_interval = cursor_save_interval
+        @filter = filter
         @thread = nil
         @mutex = Mutex.new
         @stopping = false
@@ -98,6 +100,8 @@ module Tempest
                   end
                 end
               end
+              next if @filter && !@filter.call(event)
+
               if attempt > 0 && !saw_event
                 on_event.call(StreamStatus.new(state: :live))
               end

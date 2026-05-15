@@ -54,10 +54,21 @@
 - [x] `StreamManager#stop` 後に最新 cursor が確実に保存されている
 - [x] CLI が `CursorStore` を生成して `StreamManager` に渡す
 
+### Milestone 6: フォロー先 DID を含むホームフィード相当の live stream
+- [x] `Tempest::Follows.fetch` が `app.bsky.graph.getFollows` を呼び `[{did:, handle:}, ...]` を返す
+- [x] `Tempest::Follows.fetch` は cursor を辿って全件取得する
+- [x] `Tempest::Follows.fetch` は応答が空のときに空配列を返す
+- [x] `Tempest::Jetstream::Subscription.build(self_did:, follows:, cap:)` が cap 以下なら `wanted_dids` を返し、超えたら空 (firehose) + filter set を返す
+- [x] `Subscription.build` は self_did を follows と重複なく結合する
+- [x] `StreamManager` が `filter:` predicate を受け取り、false の event は on_event に流さない（cursor 追跡は継続）
+- [x] CLI の `--feed=home`（デフォルト）/ `--feed=self` フラグが認識される
+- [x] CLI が home モードで follows を取得して Jetstream を購読する
+- [x] CLI が HandleResolver に follows の (did, handle) を seed する
+
 ## 後回し（最初のマイルストーン完了後に着手）
 - Ractor 化（CBOR デコードや高頻度フィルタ評価などの CPU 仕事）
 - HTTP 層の persistent 化（minisky 採用見直し、async-http への置き換え検討）
 - プラグイン拡張（Ruby::Box は実験フラグ前提なので慎重に）
 - 投稿のリプライ / メンション / 画像添付など lexicon 拡張
 - タイムラインの cursor ベースのページング
-- フォロー先 DID を `wantedDids` に並べたホームフィード相当の live stream
+- フォロー先の動的更新（Jetstream options_update / 定期的な再取得）

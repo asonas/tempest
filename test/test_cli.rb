@@ -194,6 +194,98 @@ class TestCLI < Minitest::Test
     end
   end
 
+  def test_feed_mode_defaults_to_home
+    assert_equal :home, Tempest::CLI.feed_mode(argv: [], env: {})
+  end
+
+  def test_feed_mode_respects_flag_self
+    assert_equal :self, Tempest::CLI.feed_mode(argv: ["--feed=self"], env: {})
+  end
+
+  def test_feed_mode_respects_flag_home_explicit
+    assert_equal :home, Tempest::CLI.feed_mode(argv: ["--feed=home"], env: {})
+  end
+
+  def test_feed_mode_respects_env_self
+    assert_equal :self, Tempest::CLI.feed_mode(argv: [], env: { "TEMPEST_FEED" => "self" })
+  end
+
+  def test_feed_mode_argv_takes_precedence_over_env
+    assert_equal :self,
+      Tempest::CLI.feed_mode(argv: ["--feed=self"], env: { "TEMPEST_FEED" => "home" })
+  end
+
+  class FakeSessionForFeed
+    attr_reader :did, :handle
+    def initialize
+      @did = "did:plc:self"
+      @handle = "asonas.bsky.social"
+    end
+  end
+
+  class FollowsStubClient
+    def initialize(follows)
+      @follows = follows
+      @calls = []
+    end
+
+    attr_reader :calls
+
+    def get(nsid, query: nil)
+      @calls << [nsid, query]
+      raise "unexpected nsid #{nsid}" unless nsid == "app.bsky.graph.getFollows"
+      { "follows" => @follows.map { |f| { "did" => f[:did], "handle" => f[:handle] } } }
+    end
+  end
+
+  def test_build_subscription_self_mode_returns_self_did_only
+    session = FakeSessionForFeed.new
+    plan = Tempest::CLI.build_subscription(
+      mode: :self, session: session, client: FollowsStubClient.new([]),
+    )
+
+    assert_equal [session.did], plan.wanted_dids
+    assert_nil plan.filter
+  end
+
+  def test_build_subscription_home_mode_fetches_follows_and_includes_them
+    session = FakeSessionForFeed.new
+    follows = [
+      { did: "did:plc:a", handle: "alice.bsky.social" },
+      { did: "did:plc:b", handle: "bob.bsky.social" },
+    ]
+    client = FollowsStubClient.new(follows)
+
+    plan = Tempest::CLI.build_subscription(mode: :home, session: session, client: client)
+
+    assert_includes plan.wanted_dids, session.did
+    assert_includes plan.wanted_dids, "did:plc:a"
+    assert_includes plan.wanted_dids, "did:plc:b"
+    assert_equal 1, client.calls.length, "should call getFollows exactly once for a single page"
+  end
+
+  def test_build_subscription_home_mode_seeds_handle_resolver
+    session = FakeSessionForFeed.new
+    follows = [{ did: "did:plc:a", handle: "alice.bsky.social" }]
+    client = FollowsStubClient.new(follows)
+    resolver = Tempest::HandleResolver.new(client: client)
+
+    Tempest::CLI.build_subscription(
+      mode: :home, session: session, client: client, handle_resolver: resolver,
+    )
+
+    # If seeding worked, resolve should NOT hit the API again.
+    initial_calls = client.calls.length
+    assert_equal "alice.bsky.social", resolver.resolve("did:plc:a")
+    assert_equal initial_calls, client.calls.length, "seeded handle should not trigger lookup"
+  end
+
+  def test_feed_mode_rejects_unknown_value
+    assert_raises(ArgumentError) do
+      Tempest::CLI.feed_mode(argv: ["--feed=garbage"], env: {})
+    end
+  end
+
   def test_cursor_store_honors_env_override
     env = { "TEMPEST_CURSOR_PATH" => "/tmp/test-cursor.json" }
     store = Tempest::CLI.cursor_store(env)

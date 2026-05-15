@@ -288,6 +288,59 @@ class TestJetstreamStreamManager < Minitest::Test
     assert_includes saved_time_us, 30
   end
 
+  def test_filter_predicate_suppresses_events_but_still_advances_cursor
+    # Three events arrive; the filter accepts only the one with did:plc:keep.
+    # The cursor (last_time_us) must still advance past the rejected events so
+    # a reconnect uses the most recent time_us, not the most recent ACCEPTED
+    # time_us — otherwise Jetstream would replay rejected events too.
+    base = Time.utc(2026, 5, 15, 12, 0, 0)
+    e1 = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:skip1", time_us: 100,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "r1", cid: nil, text: "junk", created_at: "2026-01-01T00:00:00Z",
+    )
+    e2 = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:keep", time_us: 200,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "r2", cid: nil, text: "hello", created_at: "2026-01-01T00:00:00Z",
+    )
+    e3 = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:skip2", time_us: 300,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "r3", cid: nil, text: "junk2", created_at: "2026-01-01T00:00:00Z",
+    )
+
+    client = ScriptedClient.new([
+      [e1, e2, e3],
+      nil,
+    ])
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: client,
+      backoff: [0],
+      sleeper: ->(_) {},
+      clock: -> { base },
+      filter: ->(event) { event.did == "did:plc:keep" },
+    )
+
+    delivered = Queue.new
+    manager.start do |event|
+      delivered << event if event.is_a?(Tempest::Jetstream::Event)
+    end
+
+    100.times do
+      break if client.cursors_seen.length >= 2
+      sleep 0.005
+    end
+    client.release_all
+    manager.stop
+
+    delivered_events = []
+    delivered_events << delivered.pop until delivered.empty?
+    assert_equal ["did:plc:keep"], delivered_events.map(&:did)
+    # Reconnect must have used the highest time_us, including from skipped events
+    assert_equal [nil, 300], client.cursors_seen
+  end
+
   def test_uses_stored_cursor_when_fresh
     base_time = Time.utc(2026, 5, 15, 12, 0, 0)
     store = FakeCursorStore.new(initial: {
