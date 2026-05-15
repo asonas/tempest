@@ -194,6 +194,18 @@ class TestCLI < Minitest::Test
     end
   end
 
+  def test_cursor_store_honors_env_override
+    env = { "TEMPEST_CURSOR_PATH" => "/tmp/test-cursor.json" }
+    store = Tempest::CLI.cursor_store(env)
+    assert_equal "/tmp/test-cursor.json", store.path
+  end
+
+  def test_cursor_store_falls_back_to_xdg_path
+    env = { "XDG_CONFIG_HOME" => "/tmp/xdg" }
+    store = Tempest::CLI.cursor_store(env)
+    assert_equal "/tmp/xdg/tempest/cursor.json", store.path
+  end
+
   def test_sign_in_persists_tokens_when_session_refreshes_later
     Dir.mktmpdir do |dir|
       store = Tempest::SessionStore.new(path: File.join(dir, "session.json"))

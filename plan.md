@@ -43,11 +43,21 @@
 - [x] `Runner#handle_stream_event` が `StreamStatus` を `-- <text>` 行で画面に出す
 - [x] `Runner` が `:gapped` を受け取ったら `Timeline.fetch` を呼び結果を時系列の古い順に画面に流す
 
+### Milestone 5: cursor のディスク永続化
+- [x] `CursorStore.save / load` のラウンドトリップが成立する
+- [x] `CursorStore.load` はファイル欠落 / 壊れた JSON で nil を返す
+- [x] `CursorStore.default_path` が `TEMPEST_CURSOR_PATH` / `XDG_CONFIG_HOME` / `HOME` の優先順位を尊重する
+- [x] `StreamManager` は `cursor_store` から初期 cursor を採用する
+- [x] `StreamManager` は `saved_at` が窓を超えていれば store の cursor を無視する
+- [x] `StreamManager` は live-tail 中、N 秒間隔で cursor を store に保存する（スロットル）
+- [x] `StreamManager` は切断時に保存中の cursor との差分があれば必ず保存する
+- [x] `StreamManager#stop` 後に最新 cursor が確実に保存されている
+- [x] CLI が `CursorStore` を生成して `StreamManager` に渡す
+
 ## 後回し（最初のマイルストーン完了後に着手）
 - Ractor 化（CBOR デコードや高頻度フィルタ評価などの CPU 仕事）
 - HTTP 層の persistent 化（minisky 採用見直し、async-http への置き換え検討）
 - プラグイン拡張（Ruby::Box は実験フラグ前提なので慎重に）
 - 投稿のリプライ / メンション / 画像添付など lexicon 拡張
 - タイムラインの cursor ベースのページング
-- cursor のディスク永続化（プロセス再起動越しの差分復旧）
 - フォロー先 DID を `wantedDids` に並べたホームフィード相当の live stream

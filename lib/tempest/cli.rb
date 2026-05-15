@@ -2,6 +2,7 @@ require_relative "../tempest"
 require_relative "config"
 require_relative "session"
 require_relative "session_store"
+require_relative "cursor_store"
 require_relative "xrpc_client"
 require_relative "handle_resolver"
 require_relative "jetstream/client"
@@ -39,7 +40,10 @@ module Tempest
         wanted_collections: ["app.bsky.feed.post"],
         wanted_dids: [session.did],
       )
-      stream_manager = Tempest::Jetstream::StreamManager.new(client: jetstream_client)
+      stream_manager = Tempest::Jetstream::StreamManager.new(
+        client: jetstream_client,
+        cursor_store: cursor_store(env),
+      )
 
       handle_resolver = Tempest::HandleResolver.new(client: client)
       handle_resolver.seed(session.did, session.handle)
@@ -130,6 +134,10 @@ module Tempest
       true
     end
 
+    def cursor_store(env)
+      Tempest::CursorStore.new(path: Tempest::CursorStore.default_path(env))
+    end
+
     def attach_store(session, store, identifier)
       session.identifier ||= identifier
       session.on_change = ->(s) { store.save(s, identifier: s.identifier || identifier) }
@@ -156,6 +164,9 @@ module Tempest
                                  $XDG_CONFIG_HOME/tempest/session.json or
                                  ~/.config/tempest/session.json). The cache holds refreshed
                                  tokens so the email sign-in code is only requested once.
+          TEMPEST_CURSOR_PATH    Override the Jetstream cursor cache path (default:
+                                 $XDG_CONFIG_HOME/tempest/cursor.json). Holds the last-seen
+                                 time_us so a restart can replay missed events.
       HELP
     end
 

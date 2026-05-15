@@ -16,16 +16,24 @@ module Tempest
       # we've been offline longer than this, drop the cursor and let the Runner
       # backfill via getTimeline.
       CURSOR_WINDOW_SECONDS = 12 * 60 * 60
+      # How often we persist the cursor during a stable live-tail. 5s caps the
+      # worst-case event loss on crash to a few seconds of activity while
+      # keeping disk writes negligible on a busy stream.
+      DEFAULT_CURSOR_SAVE_INTERVAL = 5.0
 
       def initialize(client:, backoff: DEFAULT_BACKOFF, sleeper: ->(s) { sleep(s) },
-                     clock: -> { Time.now })
+                     clock: -> { Time.now }, cursor_store: nil,
+                     cursor_save_interval: DEFAULT_CURSOR_SAVE_INTERVAL)
         @client = client
         @backoff = backoff
         @sleeper = sleeper
         @clock = clock
+        @cursor_store = cursor_store
+        @cursor_save_interval = cursor_save_interval
         @thread = nil
         @mutex = Mutex.new
         @stopping = false
+        @cursor_state = { live: nil, saved: nil }
       end
 
       def start(&on_event)
@@ -45,6 +53,7 @@ module Tempest
         end
         thread&.kill
         thread&.join
+        flush_cursor!
       end
 
       def running?
@@ -55,7 +64,9 @@ module Tempest
 
       def run(on_event)
         Thread.current.report_on_exception = false
-        cursor = nil
+        cursor = load_initial_cursor
+        last_saved_cursor = cursor
+        last_save_at = nil
         disconnected_at = nil
         attempt = 0
 
@@ -74,7 +85,19 @@ module Tempest
           saw_event = false
           begin
             @client.each_event(cursor: cursor) do |event|
-              cursor = event.time_us if event.respond_to?(:time_us) && event.time_us
+              if event.respond_to?(:time_us) && event.time_us
+                cursor = event.time_us
+                @mutex.synchronize { @cursor_state[:live] = cursor }
+                if @cursor_store && cursor != last_saved_cursor
+                  now = @clock.call
+                  if last_save_at.nil? || (now - last_save_at) >= @cursor_save_interval
+                    @cursor_store.save(time_us: cursor, at: now)
+                    last_saved_cursor = cursor
+                    last_save_at = now
+                    @mutex.synchronize { @cursor_state[:saved] = cursor }
+                  end
+                end
+              end
               if attempt > 0 && !saw_event
                 on_event.call(StreamStatus.new(state: :live))
               end
@@ -89,6 +112,15 @@ module Tempest
           break if stopping?
 
           disconnected_at = @clock.call
+          # Force a final save on disconnect so we don't lose the tail between
+          # the throttle interval and the connection drop.
+          if @cursor_store && cursor && cursor != last_saved_cursor
+            @cursor_store.save(time_us: cursor, at: disconnected_at)
+            last_saved_cursor = cursor
+            last_save_at = disconnected_at
+            @mutex.synchronize { @cursor_state[:saved] = cursor }
+          end
+
           on_event.call(
             StreamStatus.new(
               state: :disconnected,
@@ -105,6 +137,27 @@ module Tempest
 
       def stopping?
         @mutex.synchronize { @stopping }
+      end
+
+      def load_initial_cursor
+        return nil unless @cursor_store
+        stored = @cursor_store.load
+        return nil unless stored && stored[:time_us] && stored[:saved_at]
+        age = @clock.call - stored[:saved_at]
+        return nil if age > CURSOR_WINDOW_SECONDS
+        stored[:time_us]
+      end
+
+      # Called from `stop` after the worker thread has been killed. Ensures the
+      # most recent in-memory cursor (which the throttle may have skipped over)
+      # makes it to disk; otherwise a crash during a stable live-tail would
+      # roll us back by `cursor_save_interval` worth of events on next launch.
+      def flush_cursor!
+        return unless @cursor_store
+        live, saved = @mutex.synchronize { [@cursor_state[:live], @cursor_state[:saved]] }
+        return unless live && live != saved
+        @cursor_store.save(time_us: live, at: @clock.call)
+        @mutex.synchronize { @cursor_state[:saved] = live }
       end
     end
 

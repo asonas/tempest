@@ -132,6 +132,214 @@ class TestJetstreamStreamManager < Minitest::Test
   # we hold is likely stale. The manager should emit :gapped and drop the
   # cursor so the next subscription is a fresh live-tail; the Runner is then
   # responsible for falling back to getTimeline for display backfill.
+  # In-memory CursorStore double. Behaves like the real one but skips disk.
+  class FakeCursorStore
+    attr_reader :saves
+
+    def initialize(initial: nil)
+      @initial = initial
+      @saves = []
+      @mutex = Mutex.new
+    end
+
+    def load
+      @initial
+    end
+
+    def save(time_us:, at: Time.now)
+      @mutex.synchronize { @saves << { time_us: time_us, saved_at: at } }
+    end
+
+    def last_saved_time_us
+      @mutex.synchronize { @saves.last&.dig(:time_us) }
+    end
+  end
+
+  def test_stop_flushes_latest_cursor_even_if_killed_mid_stream
+    # The worst case: stop() arrives while the manager is blocked inside
+    # each_event (the WebSocket is parked on read). thread.kill drops the
+    # connection, so the disconnect path may not run. We still want the most
+    # recent cursor flushed to disk — including events the throttle had
+    # suppressed.
+    store = FakeCursorStore.new
+    saw_two = Queue.new
+    block_release = Queue.new
+
+    blocking_client = Class.new do
+      def initialize(sentinel:, block_release:)
+        @sentinel = sentinel
+        @block_release = block_release
+      end
+
+      def each_event(cursor: nil)
+        # First event passes the throttle (last_save_at is nil → always saves).
+        yield make("a", 100)
+        # Second event arrives within the throttle interval → NOT saved.
+        yield make("b", 200)
+        @sentinel << :delivered
+        @block_release.pop # block until stop kills us
+      end
+
+      private
+
+      def make(rkey, time_us)
+        Tempest::Jetstream::Event.new(
+          kind: :commit, did: "did:plc:x", time_us: time_us,
+          collection: "app.bsky.feed.post", operation: :create,
+          rkey: rkey, cid: nil, text: "t", created_at: "2026-01-01T00:00:00Z",
+        )
+      end
+    end.new(sentinel: saw_two, block_release: block_release)
+
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: blocking_client,
+      backoff: [0],
+      sleeper: ->(_) {},
+      cursor_store: store,
+      cursor_save_interval: 3600, # huge: second event MUST be suppressed
+    )
+
+    manager.start { |_| }
+    saw_two.pop
+    manager.stop
+
+    assert_equal 200, store.last_saved_time_us,
+      "stop() must flush the latest cursor (200) even though the throttle skipped it"
+  end
+
+  def test_force_saves_cursor_on_disconnect_if_unsaved
+    # Single event arrives within the throttle interval (no save), then the
+    # connection closes. The disconnect path must flush the latest cursor.
+    base = Time.utc(2026, 5, 15, 12, 0, 0)
+    # First @clock.call is for the throttled save check; we make it skip by
+    # returning a time within the interval. Second @clock.call is at
+    # disconnect.
+    clock_values = [base, base + 1, base + 2]
+    clock = -> { clock_values.shift || base + 10 }
+
+    store = FakeCursorStore.new
+    client = ScriptedClient.new([
+      [make_event(time_us: 77)],
+      nil,
+    ])
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: client,
+      backoff: [0],
+      sleeper: ->(_) {},
+      clock: clock,
+      cursor_store: store,
+      cursor_save_interval: 100, # large so the throttle never fires
+    )
+
+    manager.start { |_| }
+    100.times do
+      break if client.cursors_seen.length >= 2
+      sleep 0.005
+    end
+    client.release_all
+    manager.stop
+
+    assert_equal [77], store.saves.map { |s| s[:time_us] }
+  end
+
+  def test_throttles_cursor_saves_during_live_tail
+    # Three events arrive. Clock advances such that only the 1st and 3rd
+    # cross the save interval; the middle event should be coalesced into the
+    # third save.
+    base = Time.utc(2026, 5, 15, 12, 0, 0)
+    clock_values = [
+      base,         # initial cursor load check (none)
+      base,         # event 1 timestamp
+      base + 1,     # event 2 timestamp: 1s after last save → skip
+      base + 6,     # event 3 timestamp: 6s after last save → save
+      base + 7,     # disconnect timestamp
+      base + 8,     # subsequent loop iterations
+    ]
+    clock = -> { clock_values.shift || clock_values.last || base }
+
+    store = FakeCursorStore.new
+    client = ScriptedClient.new([
+      [make_event(time_us: 10), make_event(time_us: 20), make_event(time_us: 30)],
+      nil,
+    ])
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: client,
+      backoff: [0],
+      sleeper: ->(_) {},
+      clock: clock,
+      cursor_store: store,
+      cursor_save_interval: 5,
+    )
+
+    manager.start { |_| }
+    100.times do
+      break if client.cursors_seen.length >= 2
+      sleep 0.005
+    end
+    client.release_all
+    manager.stop
+
+    saved_time_us = store.saves.map { |s| s[:time_us] }
+    # First event always saves (interval elapsed from t=-inf), event 2 is
+    # within interval so skipped, event 3 saves. Disconnect path may force a
+    # final save which is fine — we only assert the throttling did its job.
+    assert_includes saved_time_us, 10
+    refute_includes saved_time_us, 20
+    assert_includes saved_time_us, 30
+  end
+
+  def test_uses_stored_cursor_when_fresh
+    base_time = Time.utc(2026, 5, 15, 12, 0, 0)
+    store = FakeCursorStore.new(initial: {
+      time_us: 4242,
+      saved_at: base_time - (1 * 60 * 60), # 1h ago, well within window
+    })
+    client = ScriptedClient.new([nil]) # first call blocks; we just want the cursor passed
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: client,
+      backoff: [0],
+      sleeper: ->(_) {},
+      clock: -> { base_time },
+      cursor_store: store,
+    )
+
+    manager.start { |_| }
+    100.times do
+      break if client.cursors_seen.length >= 1
+      sleep 0.005
+    end
+    client.release_all
+    manager.stop
+
+    assert_equal [4242], client.cursors_seen
+  end
+
+  def test_ignores_stored_cursor_when_stale
+    base_time = Time.utc(2026, 5, 15, 12, 0, 0)
+    store = FakeCursorStore.new(initial: {
+      time_us: 9999,
+      saved_at: base_time - (13 * 60 * 60), # 13h ago, beyond 12h window
+    })
+    client = ScriptedClient.new([nil])
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: client,
+      backoff: [0],
+      sleeper: ->(_) {},
+      clock: -> { base_time },
+      cursor_store: store,
+    )
+
+    manager.start { |_| }
+    100.times do
+      break if client.cursors_seen.length >= 1
+      sleep 0.005
+    end
+    client.release_all
+    manager.stop
+
+    assert_equal [nil], client.cursors_seen
+  end
+
   def test_long_offline_emits_gapped_and_drops_cursor
     base_time = Time.utc(2026, 5, 15, 12, 0, 0)
     times = [
