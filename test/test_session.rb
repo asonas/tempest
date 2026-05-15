@@ -58,6 +58,45 @@ class TestSession < Minitest::Test
     assert_raises(Tempest::AuthenticationError) { Tempest::Session.create(@config) }
   end
 
+  def test_create_exposes_error_code_for_auth_factor_token_required
+    stub_request(:post, "https://bsky.social/xrpc/com.atproto.server.createSession")
+      .to_return(
+        status: 401,
+        headers: { "Content-Type" => "application/json" },
+        body: { error: "AuthFactorTokenRequired", message: "A sign in code has been sent to your email address" }.to_json,
+      )
+
+    error = assert_raises(Tempest::AuthenticationError) { Tempest::Session.create(@config) }
+    assert_equal "AuthFactorTokenRequired", error.code
+  end
+
+  def test_create_passes_auth_factor_token_when_given
+    access_jwt = fake_jwt(exp: Time.now.to_i + 3600)
+    refresh_jwt = fake_jwt(exp: Time.now.to_i + 86_400)
+
+    stub_request(:post, "https://bsky.social/xrpc/com.atproto.server.createSession")
+      .with(
+        body: {
+          identifier: "asonas.bsky.social",
+          password: "xxxx-xxxx-xxxx-xxxx",
+          authFactorToken: "ABCDE",
+        }.to_json,
+      )
+      .to_return(
+        status: 200,
+        headers: { "Content-Type" => "application/json" },
+        body: {
+          accessJwt: access_jwt,
+          refreshJwt: refresh_jwt,
+          did: "did:plc:abcdef",
+          handle: "asonas.bsky.social",
+        }.to_json,
+      )
+
+    session = Tempest::Session.create(@config, auth_factor_token: "ABCDE")
+    assert_equal access_jwt, session.access_jwt
+  end
+
   def test_access_expired_returns_true_when_exp_in_past
     session = Tempest::Session.new(
       access_jwt: fake_jwt(exp: Time.now.to_i - 60),

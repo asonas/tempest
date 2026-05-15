@@ -10,16 +10,19 @@ module Tempest
 
     attr_reader :access_jwt, :refresh_jwt, :did, :handle, :pds_host
 
-    def self.create(config)
+    def self.create(config, auth_factor_token: nil)
       url = "#{config.pds_host}/xrpc/com.atproto.server.createSession"
-      response = Tempest::HTTP.post_json(
-        url,
-        body: { identifier: config.identifier, password: config.app_password },
-      )
+      body = { identifier: config.identifier, password: config.app_password }
+      body[:authFactorToken] = auth_factor_token if auth_factor_token
+
+      response = Tempest::HTTP.post_json(url, body: body)
 
       unless response.ok?
-        message = response.body.is_a?(Hash) ? response.body["message"] : response.body.to_s
-        raise AuthenticationError, "createSession failed (#{response.status}): #{message}"
+        details = response.body.is_a?(Hash) ? response.body : {}
+        raise AuthenticationError.new(
+          "createSession failed (#{response.status}): #{details["message"] || response.body.inspect}",
+          code: details["error"],
+        )
       end
 
       from_payload(response.body, pds_host: config.pds_host)

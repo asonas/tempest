@@ -8,7 +8,8 @@ module Tempest
   module CLI
     module_function
 
-    def run(argv: ARGV, env: ENV, stdout: $stdout, stderr: $stderr, stdin: $stdin)
+    def run(argv: ARGV, env: ENV, stdout: $stdout, stderr: $stderr, stdin: $stdin,
+            session_factory: Tempest::Session.method(:create))
       if argv.include?("--version") || argv.include?("-v")
         stdout.puts "tempest #{Tempest::VERSION}"
         return 0
@@ -20,7 +21,7 @@ module Tempest
       end
 
       config = Tempest::Config.from_env(env)
-      session = Tempest::Session.create(config)
+      session = sign_in(config, env, stdout, stdin, session_factory)
       client = Tempest::XRPCClient.new(session)
       input = RelineReader.new
 
@@ -46,6 +47,21 @@ module Tempest
       1
     end
 
+    def sign_in(config, env, stdout, stdin, session_factory)
+      token = env["TEMPEST_AUTH_FACTOR_TOKEN"]
+      session_factory.call(config, auth_factor_token: token)
+    rescue Tempest::AuthenticationError => e
+      raise unless e.code == "AuthFactorTokenRequired" && token.nil?
+
+      stdout.puts "Bluesky sent a sign-in code to your email. Enter it below."
+      stdout.print "code: "
+      stdout.flush
+      code = stdin.gets&.strip
+      raise Tempest::AuthenticationError.new("sign-in cancelled (no code entered)", code: e.code) if code.nil? || code.empty?
+
+      session_factory.call(config, auth_factor_token: code)
+    end
+
     def help_text
       <<~HELP
         Usage: tempest [options]
@@ -58,6 +74,9 @@ module Tempest
           TEMPEST_IDENTIFIER     Your handle (e.g. asonas.bsky.social)
           TEMPEST_APP_PASSWORD   An app password generated in Bluesky settings
           TEMPEST_PDS_HOST       Override PDS host (default: https://bsky.social)
+          TEMPEST_AUTH_FACTOR_TOKEN
+                                 Pre-supply an email sign-in code (rarely needed; the CLI will
+                                 prompt interactively when Bluesky asks for one)
       HELP
     end
 

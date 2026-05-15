@@ -18,4 +18,28 @@ class TestCLI < Minitest::Test
     assert_equal 0, status
     assert_match(/tempest #{Regexp.escape(Tempest::VERSION)}/, out.string)
   end
+
+  def test_run_passes_auth_factor_token_from_env
+    env = {
+      "TEMPEST_IDENTIFIER" => "ason.as",
+      "TEMPEST_APP_PASSWORD" => "xxxx",
+      "TEMPEST_AUTH_FACTOR_TOKEN" => "ABCDE",
+    }
+    captured = nil
+    fake_session_factory = ->(config, auth_factor_token: nil) do
+      captured = auth_factor_token
+      raise Tempest::AuthenticationError.new("stop here", code: "stub")
+    end
+
+    err = StringIO.new
+    Tempest::CLI.run(
+      argv: [],
+      env: env,
+      stdout: StringIO.new,
+      stderr: err,
+      session_factory: fake_session_factory,
+    )
+
+    assert_equal "ABCDE", captured
+  end
 end
