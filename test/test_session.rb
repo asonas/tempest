@@ -121,6 +121,40 @@ class TestSession < Minitest::Test
     refute session.access_expired?
   end
 
+  def test_on_change_fires_after_refresh
+    old_refresh = fake_jwt(exp: Time.now.to_i + 86_400)
+    new_access = fake_jwt(exp: Time.now.to_i + 3600)
+    new_refresh = fake_jwt(exp: Time.now.to_i + 172_800)
+
+    session = Tempest::Session.new(
+      access_jwt: fake_jwt(exp: Time.now.to_i - 60),
+      refresh_jwt: old_refresh,
+      did: "did:plc:abcdef",
+      handle: "asonas.bsky.social",
+      pds_host: "https://bsky.social",
+    )
+
+    received = nil
+    session.on_change = ->(s) { received = s }
+
+    stub_request(:post, "https://bsky.social/xrpc/com.atproto.server.refreshSession")
+      .to_return(
+        status: 200,
+        headers: { "Content-Type" => "application/json" },
+        body: {
+          accessJwt: new_access,
+          refreshJwt: new_refresh,
+          did: "did:plc:abcdef",
+          handle: "asonas.bsky.social",
+        }.to_json,
+      )
+
+    session.refresh!
+
+    assert_same session, received
+    assert_equal new_refresh, received.refresh_jwt
+  end
+
   def test_refresh_replaces_tokens
     old_refresh = fake_jwt(exp: Time.now.to_i + 86_400)
     new_access = fake_jwt(exp: Time.now.to_i + 3600)

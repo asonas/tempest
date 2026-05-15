@@ -9,6 +9,7 @@ module Tempest
     EXPIRY_LEEWAY_SECONDS = 30
 
     attr_reader :access_jwt, :refresh_jwt, :did, :handle, :pds_host
+    attr_accessor :on_change, :identifier
 
     def self.create(config, auth_factor_token: nil)
       url = "#{config.pds_host}/xrpc/com.atproto.server.createSession"
@@ -38,12 +39,13 @@ module Tempest
       )
     end
 
-    def initialize(access_jwt:, refresh_jwt:, did:, handle:, pds_host:)
+    def initialize(access_jwt:, refresh_jwt:, did:, handle:, pds_host:, identifier: nil)
       @access_jwt = access_jwt
       @refresh_jwt = refresh_jwt
       @did = did
       @handle = handle
       @pds_host = pds_host
+      @identifier = identifier
     end
 
     def access_expired?
@@ -66,6 +68,7 @@ module Tempest
       @refresh_jwt = response.body.fetch("refreshJwt")
       @did = response.body.fetch("did")
       @handle = response.body.fetch("handle")
+      @on_change&.call(self)
       self
     end
 
