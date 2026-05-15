@@ -49,6 +49,7 @@ module Tempest
     class AsyncWebSocketTransport
       def initialize
         require "async"
+        require "async/http/endpoint"
         require "async/websocket/client"
       end
 
