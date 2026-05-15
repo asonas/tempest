@@ -225,6 +225,6 @@ class TestREPLRunner < Minitest::Test
       stream_manager: stream,
     ).run
 
-    assert_match(/\[stream\] <did:plc:x> hello stream/, @output.string)
+    assert_match(/<did:plc:x>: hello stream/, @output.string)
   end
 end

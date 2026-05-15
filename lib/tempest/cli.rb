@@ -3,9 +3,11 @@ require_relative "config"
 require_relative "session"
 require_relative "session_store"
 require_relative "xrpc_client"
+require_relative "handle_resolver"
 require_relative "jetstream/client"
 require_relative "jetstream/stream_manager"
 require_relative "repl/runner"
+require_relative "repl/formatter"
 
 module Tempest
   module CLI
@@ -24,6 +26,8 @@ module Tempest
         return 0
       end
 
+      Tempest::REPL::Formatter.color = stdout.respond_to?(:tty?) && stdout.tty? && env["NO_COLOR"].to_s.empty?
+
       store ||= Tempest::SessionStore.new(path: Tempest::SessionStore.default_path(env))
       session = sign_in(env, stdout, stdin, session_factory, store: store)
       client = Tempest::XRPCClient.new(session)
@@ -35,16 +39,26 @@ module Tempest
       )
       stream_manager = Tempest::Jetstream::StreamManager.new(client: jetstream_client)
 
+      handle_resolver = Tempest::HandleResolver.new(client: client)
+      handle_resolver.seed(session.did, session.handle)
+
       stdout.puts "tempest #{Tempest::VERSION} — signed in as @#{session.handle}"
       stdout.puts "Type :help for commands, :quit to exit."
 
-      Tempest::REPL::Runner.new(
+      runner = Tempest::REPL::Runner.new(
         session: session,
         client: client,
         input: input,
         output: stdout,
         stream_manager: stream_manager,
-      ).run
+        handle_resolver: handle_resolver,
+      )
+
+      if stream_default_on?(argv, env)
+        runner.auto_start_stream
+      end
+
+      runner.run
       0
     rescue Tempest::Config::MissingValue => e
       stderr.puts "configuration error: #{e.message}"
@@ -100,6 +114,12 @@ module Tempest
       session_factory.call(config, auth_factor_token: code)
     end
 
+    def stream_default_on?(argv, env)
+      return false if argv.include?("--no-stream")
+      return false if env["TEMPEST_NO_STREAM"] == "1"
+      true
+    end
+
     def attach_store(session, store, identifier)
       session.identifier ||= identifier
       session.on_change = ->(s) { store.save(s, identifier: s.identifier || identifier) }
@@ -110,8 +130,9 @@ module Tempest
         Usage: tempest [options]
 
         Options:
-          -h, --help     Show this help
-          -v, --version  Show version
+          -h, --help       Show this help
+          -v, --version    Show version
+          --no-stream      Disable the auto-started Jetstream feed
 
         Environment (required only when no cached session is available):
           TEMPEST_IDENTIFIER     Your handle (e.g. asonas.bsky.social)
@@ -120,6 +141,7 @@ module Tempest
           TEMPEST_AUTH_FACTOR_TOKEN
                                  Pre-supply an email sign-in code (rarely needed; the CLI will
                                  prompt interactively when Bluesky asks for one)
+          TEMPEST_NO_STREAM      Set to 1 to disable the auto-started Jetstream feed
           TEMPEST_SESSION_PATH   Override the session cache path (default:
                                  $XDG_CONFIG_HOME/tempest/session.json or
                                  ~/.config/tempest/session.json). The cache holds refreshed

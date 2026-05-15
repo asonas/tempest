@@ -20,13 +20,24 @@ module Tempest
         Any other input is sent as a new post.
       HELP
 
-      def initialize(session:, client:, input:, output:, dispatcher: Dispatcher.new, stream_manager: nil)
+      def initialize(session:, client:, input:, output:, dispatcher: Dispatcher.new,
+                     stream_manager: nil, handle_resolver: nil)
         @session = session
         @client = client
         @input = input
         @output = output
         @dispatcher = dispatcher
         @stream_manager = stream_manager
+        @handle_resolver = handle_resolver
+      end
+
+      # Starts the Jetstream feed without printing a status line. Used at boot
+      # so the REPL drops straight into a live timeline (earthquake-style).
+      def auto_start_stream
+        return unless @stream_manager
+        return if @stream_manager.running?
+
+        @stream_manager.start { |event| handle_stream_event(event) }
       end
 
       def run
@@ -105,12 +116,12 @@ module Tempest
 
       def handle_stream_event(event)
         if event.is_a?(Tempest::Jetstream::StreamError)
-          @output.puts "[stream] error: #{event.cause.class}: #{event.cause.message}"
+          @output.puts "stream error: #{event.cause.class}: #{event.cause.message}"
           return
         end
         return unless event.respond_to?(:post?) && event.post? && event.create?
 
-        @output.puts Formatter.event_line(event)
+        @output.puts Formatter.event_line(event, resolver: @handle_resolver)
       end
     end
   end
