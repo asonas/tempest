@@ -8,6 +8,8 @@ require_relative "jetstream/client"
 require_relative "jetstream/stream_manager"
 require_relative "repl/runner"
 require_relative "repl/formatter"
+require_relative "repl/async_output"
+require_relative "repl/screen"
 
 module Tempest
   module CLI
@@ -45,21 +47,29 @@ module Tempest
       stdout.puts "tempest #{Tempest::VERSION} — signed in as @#{session.handle}"
       stdout.puts "Type :help for commands, :quit to exit."
 
+      screen = Tempest::REPL::Screen.new(io: stdout)
+      screen.enable
+
       runner = Tempest::REPL::Runner.new(
         session: session,
         client: client,
         input: input,
-        output: stdout,
+        output: screen.enabled? ? screen : stdout,
+        stream_output: screen.enabled? ? screen : Tempest::REPL::AsyncOutput.new(stdout),
         stream_manager: stream_manager,
         handle_resolver: handle_resolver,
       )
 
-      if stream_default_on?(argv, env)
-        runner.auto_start_stream
-      end
+      begin
+        if stream_default_on?(argv, env)
+          runner.auto_start_stream
+        end
 
-      runner.run
-      0
+        runner.run
+        0
+      ensure
+        screen.disable
+      end
     rescue Tempest::Config::MissingValue => e
       stderr.puts "configuration error: #{e.message}"
       stderr.puts "Set TEMPEST_IDENTIFIER and TEMPEST_APP_PASSWORD before launching."

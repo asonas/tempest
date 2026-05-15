@@ -21,11 +21,12 @@ module Tempest
       HELP
 
       def initialize(session:, client:, input:, output:, dispatcher: Dispatcher.new,
-                     stream_manager: nil, handle_resolver: nil)
+                     stream_manager: nil, handle_resolver: nil, stream_output: nil)
         @session = session
         @client = client
         @input = input
         @output = output
+        @stream_output = stream_output || output
         @dispatcher = dispatcher
         @stream_manager = stream_manager
         @handle_resolver = handle_resolver
@@ -116,12 +117,12 @@ module Tempest
 
       def handle_stream_event(event)
         if event.is_a?(Tempest::Jetstream::StreamError)
-          @output.puts "stream error: #{event.cause.class}: #{event.cause.message}"
+          @stream_output.puts "stream error: #{event.cause.class}: #{event.cause.message}"
           return
         end
         return unless event.respond_to?(:post?) && event.post? && event.create?
 
-        @output.puts Formatter.event_line(event, resolver: @handle_resolver)
+        @stream_output.puts Formatter.event_line(event, resolver: @handle_resolver)
       end
     end
   end
