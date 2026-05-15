@@ -23,8 +23,10 @@ This is an unofficial, third-party client. It is not affiliated with or endorsed
 Once published to RubyGems:
 
 ```sh
-gem install tempest
+gem install tempest-rb
 ```
+
+The installed executable is `tempest` (the gem name on RubyGems is `tempest-rb` because `tempest` was already taken).
 
 Or from a local checkout:
 

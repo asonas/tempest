@@ -1,7 +1,7 @@
 require_relative "lib/tempest/version"
 
 Gem::Specification.new do |spec|
-  spec.name = "tempest"
+  spec.name = "tempest-rb"
   spec.version = Tempest::VERSION
   spec.authors = ["Yuya Fujiwara"]
   spec.email = ["asonas@ivry.jp"]
