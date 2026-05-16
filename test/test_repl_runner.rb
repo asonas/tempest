@@ -582,4 +582,119 @@ class TestREPLRunner < Minitest::Test
     assert_match(/^-- reconnecting/, out)
     assert_match(/^-- live/, out)
   end
+
+  def test_reply_to_unknown_id_prints_unknown_id_and_does_not_post
+    out = run_with(["$AA hello", ":quit"])
+    assert_match(/unknown id: \$AA/, out)
+    assert_empty @client.post_calls
+  end
+
+  def test_reply_with_empty_body_prints_usage_and_does_not_post
+    # :timeline assigns $AA to the lone returned post; "$AA" with no body errors.
+    out = run_with([":timeline", "$AA", ":quit"])
+    assert_match(/usage: \$XX <text>/, out)
+    assert_empty @client.post_calls
+  end
+
+  def test_reply_happy_path_creates_post_with_handle_prefix_and_reply_target
+    out = run_with([":timeline", "$AA hello back", ":quit"])
+    assert_equal 1, @client.post_calls.length
+    nsid, body = @client.post_calls.first
+    assert_equal "com.atproto.repo.createRecord", nsid
+    assert_equal "@alice.bsky.social hello back", body[:record]["text"]
+    assert_equal(
+      "at://did:plc:a/app.bsky.feed.post/1",
+      body[:record]["reply"]["parent"]["uri"],
+    )
+    assert_equal "bafy", body[:record]["reply"]["parent"]["cid"]
+    assert_match(/posted: at:\/\//, out)
+  end
+
+  class RecordingOpener
+    attr_reader :calls
+
+    def initialize(result: true)
+      @calls = []
+      @result = result
+    end
+
+    def call(url)
+      @calls << url
+      @result
+    end
+  end
+
+  def run_with_opener(inputs, opener:)
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: StubReader.new(inputs),
+      output: @output,
+      opener: opener,
+    )
+    runner.run
+    @output.string
+  end
+
+  def test_open_unknown_id_prints_unknown_id_and_does_not_invoke_opener
+    opener = RecordingOpener.new
+    out = run_with_opener([":open $LA", ":quit"], opener: opener)
+    assert_match(/unknown id: \$LA/, out)
+    assert_empty opener.calls
+  end
+
+  def test_open_without_id_prints_usage
+    opener = RecordingOpener.new
+    out = run_with_opener([":open", ":quit"], opener: opener)
+    assert_match(/usage: :open \$LX/, out)
+    assert_empty opener.calls
+  end
+
+  def test_open_calls_opener_with_registered_url
+    client = OpenableTimelineClient.new
+    opener = RecordingOpener.new
+    runner = Tempest::REPL::Runner.new(
+      session: @session, client: client,
+      input: StubReader.new([":timeline", ":open $LA", ":quit"]),
+      output: @output, opener: opener,
+    )
+    runner.run
+
+    assert_equal ["https://example.com/page"], opener.calls
+  end
+
+  def test_open_prints_failure_when_opener_returns_false
+    client = OpenableTimelineClient.new
+    opener = RecordingOpener.new(result: false)
+    runner = Tempest::REPL::Runner.new(
+      session: @session, client: client,
+      input: StubReader.new([":timeline", ":open $LA", ":quit"]),
+      output: @output, opener: opener,
+    )
+    runner.run
+
+    assert_match(%r{error: failed to open https://example\.com/page}, @output.string)
+  end
+
+  class OpenableTimelineClient
+    def get(nsid, query: nil)
+      raise "unexpected nsid #{nsid}" unless nsid == "app.bsky.feed.getTimeline"
+      {
+        "feed" => [
+          {
+            "post" => {
+              "uri" => "at://did:plc:a/app.bsky.feed.post/p",
+              "cid" => "bafy",
+              "author" => { "handle" => "alice.bsky.social" },
+              "record" => {
+                "text" => "check https://example.com/page",
+                "createdAt" => "2026-05-15T00:00:00.000Z",
+              },
+            },
+          },
+        ],
+      }
+    end
+    def post(*) ; {} ; end
+  end
 end

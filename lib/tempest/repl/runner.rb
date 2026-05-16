@@ -6,6 +6,7 @@ require_relative "../post"
 require_relative "../jetstream/stream_manager"
 require_relative "dispatcher"
 require_relative "formatter"
+require_relative "registry"
 
 module Tempest
   module REPL
@@ -16,15 +17,20 @@ module Tempest
         Available commands:
           :timeline       Fetch and print the home timeline
           :stream on|off  Toggle the Jetstream live feed
+          :open $LX       Open the URL with id $LX in the browser
           :help           Show this help
           :quit           Exit tempest (or Ctrl-D)
+
+          $XX <text>      Reply to the post with id $XX
 
         Any other input is sent as a new post.
       HELP
 
+      DEFAULT_OPENER = ->(url) { system("open", url) }
+
       def initialize(session:, client:, input:, output:, dispatcher: Dispatcher.new,
                      stream_manager: nil, handle_resolver: nil, stream_output: nil,
-                     timeline_store: nil)
+                     timeline_store: nil, registry: Registry.new, opener: DEFAULT_OPENER)
         @session = session
         @client = client
         @input = input
@@ -34,18 +40,16 @@ module Tempest
         @stream_manager = stream_manager
         @handle_resolver = handle_resolver
         @timeline_store = timeline_store
+        @registry = registry
+        @opener = opener
       end
 
-      # Replays the cached home timeline, then fetches fresh posts and prints
-      # only those not in the cache. Called once at boot, before
-      # auto_start_stream, so the REPL has content to show before the network
-      # is reached.
       def bootstrap_timeline
         return unless @timeline_store
 
         cached = @timeline_store.load
         cached_posts = cached ? Array(cached[:posts]) : []
-        cached_posts.each { |post| @output.puts Formatter.post_line(post) }
+        cached_posts.each { |post| @output.puts Formatter.post_line(post, registry: @registry) }
 
         cached_uris = cached_posts.map(&:uri).to_set
         begin
@@ -56,14 +60,12 @@ module Tempest
         end
 
         new_posts = fetched.reject { |post| cached_uris.include?(post.uri) }
-        new_posts.reverse_each { |post| @output.puts Formatter.post_line(post) }
+        new_posts.reverse_each { |post| @output.puts Formatter.post_line(post, registry: @registry) }
 
         merged = cached_posts + new_posts.reverse
         @timeline_store.save(posts: merged)
       end
 
-      # Starts the Jetstream feed without printing a status line. Used at boot
-      # so the REPL drops straight into a live timeline (earthquake-style).
       def auto_start_stream
         return unless @stream_manager
         return if @stream_manager.running?
@@ -91,6 +93,10 @@ module Tempest
             handle_stream(command.args.first)
           when :post
             handle_post(command.args.first)
+          when :reply
+            handle_reply(command.args[0], command.args[1])
+          when :open
+            handle_open(command.args.first)
           when :unknown
             @output.puts "unknown command: :#{command.args.first}"
           end
@@ -110,7 +116,7 @@ module Tempest
         if posts.empty?
           @output.puts "(empty timeline)"
         else
-          posts.reverse_each { |post| @output.puts Formatter.post_line(post) }
+          posts.reverse_each { |post| @output.puts Formatter.post_line(post, registry: @registry) }
           @timeline_store&.save(posts: posts.reverse)
         end
       rescue Tempest::Error => e
@@ -122,6 +128,56 @@ module Tempest
         @output.puts "posted: #{response["uri"]}"
       rescue Tempest::Error => e
         @output.puts "error: #{e.message}"
+      end
+
+      def handle_reply(var, body)
+        target = @registry.find_post(var)
+        if target.nil?
+          @output.puts "unknown id: #{var}"
+          return
+        end
+        body = body.to_s.strip
+        if body.empty?
+          @output.puts "usage: $XX <text>"
+          return
+        end
+        handle = reply_handle_for(target)
+        text = handle ? "@#{handle} #{body}" : body
+        response = Post.create(
+          @client,
+          did: @session.did,
+          text: text,
+          reply: { uri: reply_uri_for(target), cid: target.cid },
+        )
+        @output.puts "posted: #{response["uri"]}"
+      rescue Tempest::Error => e
+        @output.puts "error: #{e.message}"
+      end
+
+      def handle_open(var)
+        if var.nil? || var.empty?
+          @output.puts "usage: :open $LX"
+          return
+        end
+        url = @registry.find_url(var)
+        if url.nil?
+          @output.puts "unknown id: #{var}"
+          return
+        end
+        ok = @opener.call(url)
+        @output.puts "error: failed to open #{url}" unless ok
+      end
+
+      def reply_uri_for(target)
+        target.respond_to?(:uri) && target.uri ? target.uri : target.at_uri
+      end
+
+      def reply_handle_for(target)
+        if target.respond_to?(:handle) && target.handle
+          target.handle
+        elsif @handle_resolver && target.respond_to?(:did)
+          @handle_resolver.resolve(target.did)
+        end
       end
 
       def handle_stream(arg)
@@ -157,16 +213,13 @@ module Tempest
           return unless event.respond_to?(:create?) && event.create?
           return unless event.post? || event.like? || event.repost?
 
-          @stream_output.puts Formatter.event_line(event, resolver: @handle_resolver)
+          @stream_output.puts Formatter.event_line(event, registry: @registry, resolver: @handle_resolver)
         end
       end
 
-      # Pulls the home feed and replays it in chronological order so the gap is
-      # filled below the "-- fetching timeline" status line. Errors are swallowed
-      # to a single status line — a failed backfill must not kill the live feed.
       def backfill_timeline
         posts = Timeline.fetch(@client)
-        posts.reverse_each { |post| @stream_output.puts Formatter.post_line(post) }
+        posts.reverse_each { |post| @stream_output.puts Formatter.post_line(post, registry: @registry) }
       rescue Tempest::Error => e
         @stream_output.puts "-- timeline backfill failed: #{e.message}"
       end
