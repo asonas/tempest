@@ -36,6 +36,10 @@ module Tempest
       def create?
         operation == :create
       end
+
+      def at_uri
+        "at://#{did}/#{collection}/#{rkey}"
+      end
     end
 
     module Decoder

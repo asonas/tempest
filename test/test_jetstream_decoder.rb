@@ -163,4 +163,13 @@ class TestJetstreamDecoder < Minitest::Test
     event = decode(payload)
     assert_nil event.subject_uri
   end
+
+  def test_event_at_uri_concatenates_did_collection_and_rkey
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:x", time_us: 1,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "abc", cid: nil, text: nil, created_at: nil,
+    )
+    assert_equal "at://did:plc:x/app.bsky.feed.post/abc", event.at_uri
+  end
 end
