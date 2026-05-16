@@ -48,4 +48,35 @@ class TestPostCreate < Minitest::Test
     _, body = client.calls.first
     assert_match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\z/, body[:record]["createdAt"])
   end
+
+  def test_create_with_reply_includes_root_and_parent_equal_to_target
+    client = FakeClient.new("uri" => "at://did:plc:abc/app.bsky.feed.post/zzz")
+
+    Tempest::Post.create(
+      client,
+      did: "did:plc:abc",
+      text: "@bob hi",
+      reply: { uri: "at://did:plc:bob/app.bsky.feed.post/parent",
+               cid: "bafyparent" },
+      created_at: "2026-05-15T00:00:00.000Z",
+    )
+
+    _, body = client.calls.first
+    record = body[:record]
+    assert_equal(
+      { "uri" => "at://did:plc:bob/app.bsky.feed.post/parent", "cid" => "bafyparent" },
+      record["reply"]["root"],
+    )
+    assert_equal(
+      { "uri" => "at://did:plc:bob/app.bsky.feed.post/parent", "cid" => "bafyparent" },
+      record["reply"]["parent"],
+    )
+  end
+
+  def test_create_without_reply_does_not_set_reply_field
+    client = FakeClient.new("uri" => "at://x")
+    Tempest::Post.create(client, did: "did:plc:abc", text: "plain")
+    _, body = client.calls.first
+    refute body[:record].key?("reply")
+  end
 end

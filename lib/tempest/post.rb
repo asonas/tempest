@@ -16,13 +16,28 @@ module Tempest
     end
 
     # Compose a record for com.atproto.repo.createRecord (app.bsky.feed.post).
-    def self.create(client, did:, text:, created_at: Time.now.utc.strftime("%Y-%m-%dT%H:%M:%S.%LZ"))
+    # When `reply` is provided, both root and parent are set to the same
+    # target. This is correct for top-level replies and a known v1 trade-off
+    # for replies deeper in a thread (AppView will nest the reply under
+    # `parent` instead of the original conversation root).
+    def self.create(client, did:, text:, reply: nil,
+                    created_at: Time.now.utc.strftime("%Y-%m-%dT%H:%M:%S.%LZ"))
+      record = {
+        "$type" => "app.bsky.feed.post",
+        "text" => text,
+        "createdAt" => created_at,
+      }
+      if reply
+        ref = { "uri" => reply[:uri], "cid" => reply[:cid] }
+        record["reply"] = { "root" => ref, "parent" => ref }
+      end
+
       client.post(
         "com.atproto.repo.createRecord",
         body: {
           repo: did,
           collection: "app.bsky.feed.post",
-          record: { "$type" => "app.bsky.feed.post", "text" => text, "createdAt" => created_at },
+          record: record,
         },
       )
     end
