@@ -1,11 +1,16 @@
 require "time"
+require "uri"
 
 require_relative "../../tempest"
 
 module Tempest
   module REPL
     # Renders posts and Jetstream events as terminal lines, earthquake-style:
-    #   [HH:MM] @handle: text
+    #   [$AA] [HH:MM] @handle: text
+    # The leading [$AA] is only emitted when a Registry is supplied (and the
+    # event is something that can be replied to — a post, not a delete or a
+    # like/repost record). URLs found in the body are annotated inline with
+    # their own ($LA) ids when a registry is supplied.
     # ANSI colors are emitted only when Formatter.color is true (set by the
     # CLI when stdout is a TTY); tests run with color disabled.
     module Formatter
@@ -26,8 +31,11 @@ module Tempest
 
       module_function
 
-      def post_line(post)
-        compose(format_time(post.created_at), post.handle, nil, decorate_body(squeeze(post.text)))
+      def post_line(post, registry: nil)
+        var = registry&.assign_post(post)
+        body = annotate_urls(squeeze(post.text), registry)
+        body = decorate_body(body)
+        compose(var, format_time(post.created_at), post.handle, nil, body)
       end
 
       def decorate_body(text)
@@ -60,18 +68,23 @@ module Tempest
         time.respond_to?(:localtime) ? time.localtime.strftime("%H:%M") : time.to_s
       end
 
-      def event_line(event, resolver: nil)
+      def event_line(event, registry: nil, resolver: nil)
         handle = resolver&.resolve(event.did)
-        body = if event.operation == :delete
-          "(deleted #{event.collection}/#{event.rkey})"
+        if event.operation == :delete
+          body = "(deleted #{event.collection}/#{event.rkey})"
+          var = nil
         elsif event.respond_to?(:like?) && event.like?
-          "liked #{subject_owner_label(event.subject_uri, resolver)}"
+          body = "liked #{subject_owner_label(event.subject_uri, resolver)}"
+          var = nil
         elsif event.respond_to?(:repost?) && event.repost?
-          "reposted #{subject_owner_label(event.subject_uri, resolver)}"
+          body = "reposted #{subject_owner_label(event.subject_uri, resolver)}"
+          var = nil
         else
-          decorate_body(squeeze(event.text))
+          body = annotate_urls(squeeze(event.text), registry)
+          body = decorate_body(body)
+          var = registry&.assign_post(event)
         end
-        compose(format_time(event.created_at), handle, event.did, body)
+        compose(var, format_time(event.created_at), handle, event.did, body)
       end
 
       def subject_owner_label(subject_uri, resolver)
@@ -89,6 +102,16 @@ module Tempest
         match && match[1]
       end
 
+      def annotate_urls(text, registry)
+        return text unless registry
+        urls = URI.extract(text.to_s, ["http", "https"]).uniq
+        urls.each do |url|
+          var = registry.assign_url(url)
+          text = text.sub(url, "#{url} (#{var})")
+        end
+        text
+      end
+
       def squeeze(text)
         text.to_s.gsub(/\s*\n\s*/, " ")
       end
@@ -100,14 +123,20 @@ module Tempest
         nil
       end
 
-      def compose(time, handle, did, text)
-        prefix = time ? bracket(time) : ""
+      def compose(var, time, handle, did, text)
+        prefix = ""
+        prefix += id_label(var) if var
+        prefix += bracket(time) if time
         identity = handle ? handle_label(handle) : did_label(did)
         "#{prefix}#{identity}: #{text}"
       end
 
       def bracket(time)
         Formatter.color ? "#{CYAN}[#{time}]#{RESET} " : "[#{time}] "
+      end
+
+      def id_label(var)
+        Formatter.color ? "#{DIM}[#{var}]#{RESET} " : "[#{var}] "
       end
 
       def handle_label(handle)

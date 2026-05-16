@@ -2,6 +2,7 @@ require_relative "test_helper"
 require "tempest/post"
 require "tempest/jetstream/decoder"
 require "tempest/repl/formatter"
+require "tempest/repl/registry"
 
 class TestREPLFormatter < Minitest::Test
   def setup
@@ -227,5 +228,87 @@ class TestREPLFormatter < Minitest::Test
 
     line = Tempest::REPL::Formatter.event_line(event, resolver: StubResolver.new("did:plc:actor" => "alice.bsky.social"))
     assert_equal "@alice.bsky.social: liked a post", line
+  end
+
+  def test_post_line_with_registry_prepends_dollar_id_after_time
+    post = Tempest::Post.new(
+      uri: "at://x/1", cid: "bafy",
+      handle: "alice.bsky.social", display_name: nil,
+      text: "hi", created_at: "2026-05-15T01:00:00.000Z",
+    )
+    registry = Tempest::REPL::Registry.new
+
+    line = Tempest::REPL::Formatter.post_line(post, registry: registry)
+    assert_equal "[$AA] [10:00] @alice.bsky.social: hi", line
+  end
+
+  def test_post_line_with_registry_annotates_urls_with_link_id
+    post = Tempest::Post.new(
+      uri: "at://x/1", cid: "bafy",
+      handle: "alice.bsky.social", display_name: nil,
+      text: "see https://example.com and also https://other.test",
+      created_at: nil,
+    )
+    registry = Tempest::REPL::Registry.new
+
+    line = Tempest::REPL::Formatter.post_line(post, registry: registry)
+    assert_equal(
+      "[$AA] @alice.bsky.social: see https://example.com ($LA) and also https://other.test ($LB)",
+      line,
+    )
+  end
+
+  def test_post_line_without_registry_is_unchanged
+    post = Tempest::Post.new(
+      uri: "at://x/1", cid: "bafy",
+      handle: "alice.bsky.social", display_name: nil,
+      text: "see https://example.com", created_at: nil,
+    )
+    line = Tempest::REPL::Formatter.post_line(post)
+    assert_equal "@alice.bsky.social: see https://example.com", line
+  end
+
+  def test_event_line_with_registry_prepends_dollar_id_for_post_create
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:x", time_us: 1,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "r", cid: "bafy",
+      text: "hello stream", created_at: "2026-01-01T00:00:00Z",
+    )
+    registry = Tempest::REPL::Registry.new
+
+    line = Tempest::REPL::Formatter.event_line(event, registry: registry)
+    assert_equal "[$AA] [09:00] <did:plc:x>: hello stream", line
+  end
+
+  def test_event_line_with_registry_does_not_assign_id_for_delete
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:x", time_us: 1,
+      collection: "app.bsky.feed.post", operation: :delete,
+      rkey: "r", cid: nil, text: nil, created_at: nil,
+    )
+    registry = Tempest::REPL::Registry.new
+
+    line = Tempest::REPL::Formatter.event_line(event, registry: registry)
+    refute_match(/\[\$AA\]/, line)
+    # And the registry was not consumed (next post still gets $AA).
+    post = Tempest::Post.new(
+      uri: "at://x/1", cid: "bafy",
+      handle: "h", display_name: nil, text: "t", created_at: nil,
+    )
+    assert_equal "$AA", registry.assign_post(post)
+  end
+
+  def test_event_line_with_registry_does_not_assign_id_for_like
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:actor", time_us: 1,
+      collection: "app.bsky.feed.like", operation: :create,
+      rkey: "lk", cid: nil, text: nil, created_at: nil,
+      subject_uri: "at://did:plc:target/app.bsky.feed.post/abc",
+    )
+    registry = Tempest::REPL::Registry.new
+
+    line = Tempest::REPL::Formatter.event_line(event, registry: registry)
+    refute_match(/\[\$AA\]/, line)
   end
 end
