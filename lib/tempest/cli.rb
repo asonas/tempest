@@ -77,6 +77,7 @@ module Tempest
         stream_manager: stream_manager,
         handle_resolver: handle_resolver,
         timeline_store: timeline_store(env),
+        opener: opener_for(env: env),
       )
 
       begin
@@ -159,6 +160,12 @@ module Tempest
       Tempest::TimelineStore.new(path: Tempest::TimelineStore.default_path(env))
     end
 
+    def opener_for(env:, system_proc: Kernel.method(:system))
+      cmd = env["TEMPEST_OPEN_CMD"]
+      return Tempest::REPL::Runner::DEFAULT_OPENER if cmd.nil? || cmd.empty?
+      ->(url) { system_proc.call(cmd, url) }
+    end
+
     VALID_FEED_MODES = %i[home self].freeze
 
     def feed_mode(argv:, env: {})
@@ -223,6 +230,9 @@ module Tempest
                                  Pre-supply an email sign-in code (rarely needed; the CLI will
                                  prompt interactively when Bluesky asks for one)
           TEMPEST_NO_STREAM      Set to 1 to disable the auto-started Jetstream feed
+          TEMPEST_OPEN_CMD       Command used to open URLs when :open $LX is invoked
+                                 (default: "open"). The URL is passed as the single
+                                 argument after the command.
           TEMPEST_SESSION_PATH   Override the session cache path (default:
                                  $XDG_CONFIG_HOME/tempest/session.json or
                                  ~/.config/tempest/session.json). The cache holds refreshed

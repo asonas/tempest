@@ -310,6 +310,36 @@ class TestCLI < Minitest::Test
     assert_equal "/tmp/xdg/tempest/timeline.json", store.path
   end
 
+  def test_opener_for_env_uses_runner_default_when_no_env_var
+    opener = Tempest::CLI.opener_for(env: {})
+    assert_equal Tempest::REPL::Runner::DEFAULT_OPENER, opener
+  end
+
+  def test_opener_for_env_uses_runner_default_when_env_var_is_empty
+    opener = Tempest::CLI.opener_for(env: { "TEMPEST_OPEN_CMD" => "" })
+    assert_equal Tempest::REPL::Runner::DEFAULT_OPENER, opener
+  end
+
+  def test_opener_for_env_wraps_tempest_open_cmd_and_passes_url
+    recorded = nil
+    fake_system = ->(*args) { recorded = args; true }
+    opener = Tempest::CLI.opener_for(
+      env: { "TEMPEST_OPEN_CMD" => "/bin/echo" },
+      system_proc: fake_system,
+    )
+    assert opener.call("https://example.com")
+    assert_equal ["/bin/echo", "https://example.com"], recorded
+  end
+
+  def test_opener_for_env_wrapped_opener_returns_falsey_on_system_failure
+    fake_system = ->(*) { false }
+    opener = Tempest::CLI.opener_for(
+      env: { "TEMPEST_OPEN_CMD" => "/bin/false" },
+      system_proc: fake_system,
+    )
+    refute opener.call("https://example.com")
+  end
+
   def test_sign_in_persists_tokens_when_session_refreshes_later
     Dir.mktmpdir do |dir|
       store = Tempest::SessionStore.new(path: File.join(dir, "session.json"))
