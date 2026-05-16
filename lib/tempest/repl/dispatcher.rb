@@ -5,7 +5,8 @@ module Tempest
     Command = Data.define(:name, :args)
 
     class Dispatcher
-      KNOWN_COMMANDS = %i[timeline quit help stream].freeze
+      KNOWN_COMMANDS = %i[timeline quit help stream open].freeze
+      DOLLAR_ID = /\A\$[A-Z]{2}\z/.freeze
 
       def dispatch(input)
         return Command.new(name: :quit, args: []) if input.nil?
@@ -22,7 +23,12 @@ module Tempest
             Command.new(name: :unknown, args: [name])
           end
         else
-          Command.new(name: :post, args: [stripped])
+          head, tail = stripped.split(/\s+/, 2)
+          if DOLLAR_ID.match?(head)
+            Command.new(name: :reply, args: [head, tail.to_s])
+          else
+            Command.new(name: :post, args: [stripped])
+          end
         end
       end
     end

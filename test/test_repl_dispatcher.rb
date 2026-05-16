@@ -61,4 +61,46 @@ class TestREPLDispatcher < Minitest::Test
     assert_equal :stream, cmd.name
     assert_equal [], cmd.args
   end
+
+  def test_dollar_id_with_body_returns_reply_command
+    cmd = @dispatcher.dispatch("$AA hello there")
+    assert_equal :reply, cmd.name
+    assert_equal ["$AA", "hello there"], cmd.args
+  end
+
+  def test_dollar_id_with_link_prefix_returns_reply_command
+    cmd = @dispatcher.dispatch("$LA hello")
+    assert_equal :reply, cmd.name
+    assert_equal ["$LA", "hello"], cmd.args
+  end
+
+  def test_dollar_id_alone_returns_reply_with_empty_body
+    cmd = @dispatcher.dispatch("$AA")
+    assert_equal :reply, cmd.name
+    assert_equal ["$AA", ""], cmd.args
+  end
+
+  def test_colon_open_with_id_returns_open_command
+    cmd = @dispatcher.dispatch(":open $LA")
+    assert_equal :open, cmd.name
+    assert_equal ["$LA"], cmd.args
+  end
+
+  def test_colon_open_without_arg_returns_open_command_with_empty_args
+    cmd = @dispatcher.dispatch(":open")
+    assert_equal :open, cmd.name
+    assert_equal [], cmd.args
+  end
+
+  def test_dollar_with_digit_is_still_post
+    cmd = @dispatcher.dispatch("$5 for coffee")
+    assert_equal :post, cmd.name
+    assert_equal ["$5 for coffee"], cmd.args
+  end
+
+  def test_dollar_id_with_lowercase_is_still_post
+    cmd = @dispatcher.dispatch("$aa hello")
+    assert_equal :post, cmd.name
+    assert_equal ["$aa hello"], cmd.args
+  end
 end
