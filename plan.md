@@ -111,15 +111,15 @@ Asynchronous path:
 
 ### Tempest::REPL::Formatter (integration with AvatarStore)
 
-- [ ] `post_line(post, avatar_store: nil)` matches today's output exactly when
-      `avatar_store` is nil (regression guard).
-- [ ] `post_line(post, avatar_store: store)` where `store.path_for(post.did)`
+- [x] `post_line(post, avatar_store: nil)` matches today's output exactly when
+      `avatar_store` is nil (regression guard, covered by all existing tests).
+- [x] `post_line(post, avatar_store: store)` where `store.path_for(post.did)`
       returns nil also matches today's output (no icon when unavailable).
-- [ ] `post_line(post, avatar_store: store)` where the store returns a real
+- [x] `post_line(post, avatar_store: store)` where the store returns a real
       PNG path injects the Kitty escape immediately before `@handle`, with one
       space between the icon and `@`.
-- [ ] `event_line` mirrors the above for Jetstream events that carry a DID.
-- [ ] Icon rendering respects `Formatter.color`: when `Formatter.color` is
+- [x] `event_line` mirrors the above for Jetstream events that carry a DID.
+- [x] Icon rendering respects `Formatter.color`: when `Formatter.color` is
       false (test mode), no escape is emitted — same way ANSI colors are
       suppressed today. (Avoids polluting test snapshots.)
 

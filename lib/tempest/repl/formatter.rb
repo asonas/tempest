@@ -2,6 +2,7 @@ require "time"
 require "uri"
 
 require_relative "../../tempest"
+require_relative "../kitty"
 
 module Tempest
   module REPL
@@ -31,13 +32,14 @@ module Tempest
 
       module_function
 
-      def post_line(post, registry: nil)
+      def post_line(post, registry: nil, avatar_store: nil)
         var = registry&.assign_post(post)
         facets = post.respond_to?(:facets) ? post.facets : nil
         body = annotate_urls(squeeze(post.text), registry, facets: facets)
         body = decorate_body(body)
         body = prepend_reply_marker(body, reply_parent_uri_of(post), registry)
-        compose(var, format_time(post.created_at), post.handle, nil, body)
+        icon = avatar_icon(post_did(post), avatar_store)
+        compose(var, format_time(post.created_at), post.handle, nil, body, icon: icon)
       end
 
       def decorate_body(text)
@@ -70,7 +72,7 @@ module Tempest
         time.respond_to?(:localtime) ? time.localtime.strftime("%H:%M") : time.to_s
       end
 
-      def event_line(event, registry: nil, resolver: nil)
+      def event_line(event, registry: nil, resolver: nil, avatar_store: nil)
         handle = resolver&.resolve(event.did)
         if event.operation == :delete
           body = "(deleted #{event.collection}/#{event.rkey})"
@@ -88,7 +90,8 @@ module Tempest
           body = prepend_reply_marker(body, reply_parent_uri_of(event), registry)
           var = registry&.assign_post(event)
         end
-        compose(var, format_time(event.created_at), handle, event.did, body)
+        icon = avatar_icon(event.did, avatar_store)
+        compose(var, format_time(event.created_at), handle, event.did, body, icon: icon)
       end
 
       def subject_owner_label(subject_uri, resolver, registry = nil)
@@ -182,12 +185,32 @@ module Tempest
         nil
       end
 
-      def compose(var, time, handle, did, text)
+      def compose(var, time, handle, did, text, icon: nil)
         prefix = ""
         prefix += id_label(var) if var
         prefix += bracket(time) if time
         identity = handle ? handle_label(handle) : did_label(did)
+        identity = "#{icon} #{identity}" if icon
         "#{prefix}#{identity}: #{text}"
+      end
+
+      # DID for a Post is extracted from its at:// URI, since Post itself only
+      # carries handle. AvatarStore is keyed by DID, so we have to derive it.
+      def post_did(post)
+        return nil unless post.respond_to?(:uri)
+        subject_did(post.uri)
+      end
+
+      # Returns the Kitty graphics escape for this DID's avatar, or nil when
+      # avatars are off, the store has nothing yet, or colors are disabled
+      # (test mode mirrors today's color suppression so snapshots stay clean).
+      def avatar_icon(did, avatar_store)
+        return nil unless avatar_store
+        return nil unless Formatter.color
+        return nil if did.nil? || did.empty?
+        path = avatar_store.path_for(did)
+        return nil if path.nil?
+        Kitty.inline(path)
       end
 
       def bracket(time)

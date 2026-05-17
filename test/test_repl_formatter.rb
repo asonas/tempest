@@ -1,3 +1,5 @@
+require "tempfile"
+
 require_relative "test_helper"
 require "tempest/post"
 require "tempest/jetstream/decoder"
@@ -523,6 +525,101 @@ class TestREPLFormatter < Minitest::Test
 
     line = Tempest::REPL::Formatter.post_line(reply)
     assert_equal "@alice.bsky.social: thanks", line
+  end
+
+  class StubAvatarStore
+    def initialize(table = {})
+      @table = table
+    end
+    def path_for(did) = @table[did]
+  end
+
+  # When an avatar store is wired in but it doesn't have a path for this DID,
+  # the line must look exactly like today — no leading icon, no stray spaces.
+  def test_post_line_with_avatar_store_returning_nil_matches_baseline
+    post = Tempest::Post.new(
+      uri: "at://did:plc:abc/app.bsky.feed.post/r", cid: "bafy",
+      handle: "alice.bsky.social", display_name: nil,
+      text: "hi", created_at: "2026-05-15T01:00:00.000Z",
+    )
+    store = StubAvatarStore.new # path_for returns nil for everything
+
+    line = Tempest::REPL::Formatter.post_line(post, avatar_store: store)
+    assert_equal "[10:00] @alice.bsky.social: hi", line
+  end
+
+  # Color is off in tests, and we mirror that for icons so existing assertions
+  # against exact string output keep passing even with a populated store.
+  def test_post_line_omits_icon_when_color_off_even_if_avatar_path_known
+    png = Tempfile.new(["avatar", ".png"], binmode: true)
+    png.write("\x89PNG\r\n\x1A\n")
+    png.close
+
+    post = Tempest::Post.new(
+      uri: "at://did:plc:abc/app.bsky.feed.post/r", cid: "bafy",
+      handle: "alice.bsky.social", display_name: nil,
+      text: "hi", created_at: nil,
+    )
+    store = StubAvatarStore.new("did:plc:abc" => png.path)
+
+    line = Tempest::REPL::Formatter.post_line(post, avatar_store: store)
+    refute_includes line, "\e_G", "icon should be suppressed when color is off: #{line.inspect}"
+    assert_equal "@alice.bsky.social: hi", line
+  ensure
+    png&.close
+    png&.unlink
+  end
+
+  def test_post_line_injects_kitty_escape_before_handle_when_color_on_and_avatar_known
+    Tempest::REPL::Formatter.color = true
+    png = Tempfile.new(["avatar", ".png"], binmode: true)
+    png.write("\x89PNG\r\n\x1A\n")
+    png.close
+
+    post = Tempest::Post.new(
+      uri: "at://did:plc:abc/app.bsky.feed.post/r", cid: "bafy",
+      handle: "alice.bsky.social", display_name: nil,
+      text: "hi", created_at: nil,
+    )
+    store = StubAvatarStore.new("did:plc:abc" => png.path)
+
+    line = Tempest::REPL::Formatter.post_line(post, avatar_store: store)
+
+    assert_includes line, "\e_G", "expected a Kitty graphics escape in: #{line.inspect}"
+    assert_includes line, "@alice.bsky.social"
+    icon_index = line.index("\e_G")
+    handle_index = line.index("@alice.bsky.social")
+    assert_operator icon_index, :<, handle_index,
+      "icon should come before the handle in: #{line.inspect}"
+    # Exactly one space sits between the icon's trailing ESC\ and the handle's
+    # ANSI green prefix.
+    assert_match(/\e\\\s\e\[32m@alice\.bsky\.social/, line)
+  ensure
+    png&.close
+    png&.unlink
+  end
+
+  def test_event_line_injects_kitty_escape_before_handle_when_avatar_known
+    Tempest::REPL::Formatter.color = true
+    png = Tempfile.new(["avatar", ".png"], binmode: true)
+    png.write("\x89PNG\r\n\x1A\n")
+    png.close
+
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:abc", time_us: 1,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "r", cid: nil, text: "hi stream", created_at: nil,
+    )
+    resolver = StubResolver.new("did:plc:abc" => "alice.bsky.social")
+    store = StubAvatarStore.new("did:plc:abc" => png.path)
+
+    line = Tempest::REPL::Formatter.event_line(event, resolver: resolver, avatar_store: store)
+
+    assert_includes line, "\e_G"
+    assert_match(/\e\\\s\e\[32m@alice\.bsky\.social/, line)
+  ensure
+    png&.close
+    png&.unlink
   end
 
   def test_event_line_with_registry_does_not_assign_id_for_like
