@@ -101,6 +101,25 @@ A built-in watchdog runs alongside the Jetstream consumer regardless of logging:
 
 To inspect the log, grep by component tag: `grep '\[stream\]' ~/tempest-debug.log` shows connect, reconnect, gap, and disconnect events, while `grep '\[watchdog\]' ~/tempest-debug.log` shows forced reconnects.
 
+## Non-interactive CLI
+
+Once you have signed in once with `tempest tui`, you can call the CLI from scripts and tools:
+
+```sh
+tempest whoami --json
+tempest post "今日もよろしくお願いします"
+tempest feed me --since today --format json | jq '.text'
+tempest feed author asonas.bsky.social --limit 20
+```
+
+`--format=json` emits newline-delimited JSON; one post per line. The schema is documented in `lib/tempest/post_view.rb`.
+
+`--format=raw` emits the underlying `getAuthorFeed`/`getTimeline` response pretty-printed; do not rely on its shape.
+
+`--format=line` (default when stdout is a TTY) prints the same single-line representation as the TUI scroll buffer.
+
+The non-interactive subcommands require a cached session on disk. If your cache is missing or expired, run `tempest tui` once to refresh it.
+
 ## Development
 
 ```sh

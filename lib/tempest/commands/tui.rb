@@ -270,15 +270,22 @@ module Tempest
 
       def help_text
         <<~HELP
-          Usage: tempest [options]
+          Usage: tempest [subcommand] [options]
 
-          Options:
-            -h, --help       Show this help
-            -v, --version    Show version
-            --no-stream      Disable the auto-started Jetstream feed
-            --feed=MODE      Choose what the live feed subscribes to:
-                               home  (default) Your follows + your own posts
-                               self  Only your own posts (legacy echo mode)
+          Subcommands:
+            tui                 (default) launch the interactive TUI
+            post <text|->       create a post (use `-` to read text from stdin)
+            feed me|timeline|author <handle> [opts]
+                                read posts; --format=line|json|raw, --since, --until, --limit
+            whoami              print the signed-in identity
+
+          TUI options:
+            -h, --help          Show this help
+            -v, --version       Show version
+            --no-stream         Disable the auto-started Jetstream feed
+            --feed=MODE         Choose what the live feed subscribes to:
+                                  home  (default) Your follows + your own posts
+                                  self  Only your own posts (legacy echo mode)
 
           Environment (required only when no cached session is available):
             TEMPEST_IDENTIFIER     Your handle (e.g. asonas.bsky.social)
