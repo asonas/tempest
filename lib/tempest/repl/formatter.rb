@@ -76,10 +76,10 @@ module Tempest
           body = "(deleted #{event.collection}/#{event.rkey})"
           var = nil
         elsif event.respond_to?(:like?) && event.like?
-          body = "liked #{subject_owner_label(event.subject_uri, resolver)}"
+          body = "liked #{subject_owner_label(event.subject_uri, resolver, registry)}"
           var = nil
         elsif event.respond_to?(:repost?) && event.repost?
-          body = "reposted #{subject_owner_label(event.subject_uri, resolver)}"
+          body = "reposted #{subject_owner_label(event.subject_uri, resolver, registry)}"
           var = nil
         else
           facets = event.respond_to?(:facets) ? event.facets : nil
@@ -91,13 +91,18 @@ module Tempest
         compose(var, format_time(event.created_at), handle, event.did, body)
       end
 
-      def subject_owner_label(subject_uri, resolver)
+      def subject_owner_label(subject_uri, resolver, registry = nil)
         did = subject_did(subject_uri)
         return "a post" unless did
 
         handle = resolver&.resolve(did)
         owner = handle ? handle_label(handle) : did_label(did)
-        "#{owner}'s post"
+        label = "#{owner}'s post"
+        var = registry&.var_for_uri(subject_uri)
+        return label unless var
+
+        bracket = Formatter.color ? "#{DIM}[#{var}]#{RESET}" : "[#{var}]"
+        "#{label} #{bracket}"
       end
 
       def subject_did(subject_uri)

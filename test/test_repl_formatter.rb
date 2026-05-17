@@ -160,6 +160,54 @@ class TestREPLFormatter < Minitest::Test
     assert_equal "@alice.bsky.social: liked <did:plc:target>'s post", line
   end
 
+  def test_event_line_for_like_annotates_subject_with_registry_var_when_known
+    subject_uri = "at://did:plc:target/app.bsky.feed.post/abc"
+    registry = Tempest::REPL::Registry.new
+    subject_post = Tempest::Post.new(
+      uri: subject_uri, cid: "bafy", handle: "bob.bsky.social",
+      display_name: nil, text: "original", created_at: nil,
+    )
+    assigned_var = registry.assign_post(subject_post)
+
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:actor", time_us: 1,
+      collection: "app.bsky.feed.like", operation: :create,
+      rkey: "lk", cid: nil, text: nil, created_at: "2026-01-01T00:00:00Z",
+      subject_uri: subject_uri,
+    )
+    resolver = StubResolver.new(
+      "did:plc:actor" => "alice.bsky.social",
+      "did:plc:target" => "bob.bsky.social",
+    )
+
+    line = Tempest::REPL::Formatter.event_line(event, registry: registry, resolver: resolver)
+    assert_equal "[09:00] @alice.bsky.social: liked @bob.bsky.social's post [#{assigned_var}]", line
+  end
+
+  def test_event_line_for_repost_annotates_subject_with_registry_var_when_known
+    subject_uri = "at://did:plc:target/app.bsky.feed.post/xyz"
+    registry = Tempest::REPL::Registry.new
+    subject_post = Tempest::Post.new(
+      uri: subject_uri, cid: "bafy", handle: "bob.bsky.social",
+      display_name: nil, text: "original", created_at: nil,
+    )
+    assigned_var = registry.assign_post(subject_post)
+
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:actor", time_us: 1,
+      collection: "app.bsky.feed.repost", operation: :create,
+      rkey: "rp", cid: nil, text: nil, created_at: "2026-01-01T00:00:00Z",
+      subject_uri: subject_uri,
+    )
+    resolver = StubResolver.new(
+      "did:plc:actor" => "alice.bsky.social",
+      "did:plc:target" => "bob.bsky.social",
+    )
+
+    line = Tempest::REPL::Formatter.event_line(event, registry: registry, resolver: resolver)
+    assert_equal "[09:00] @alice.bsky.social: reposted @bob.bsky.social's post [#{assigned_var}]", line
+  end
+
   def test_decorate_body_returns_plain_text_when_color_is_off
     text = "check #ruby at https://example.com"
     assert_equal text, Tempest::REPL::Formatter.decorate_body(text)

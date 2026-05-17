@@ -62,7 +62,7 @@ The first sign-in may prompt for the email code Bluesky sends as a second factor
 
 Anything else you type is sent as a new post.
 
-Each post in the timeline is prefixed with a short `$XX` id, and URLs found inside posts get their own `$LX` ids. Use those ids with `$XX <text>` to reply or `:open $LX` to open a link.
+Each post in the timeline is prefixed with a short `$XX` id, and URLs found inside posts get their own `$LX` ids. Use those ids with `$XX <text>` to reply or `:open $LX` to open a link. Like and repost events show the subject post's `$XX` id in trailing brackets (for example `liked @bob's post [$AA]`) whenever the original post is still in the session registry, so you can reply to it directly.
 
 ### CLI options
 
