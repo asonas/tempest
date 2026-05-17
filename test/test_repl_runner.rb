@@ -772,8 +772,48 @@ class TestREPLRunner < Minitest::Test
   def test_open_without_id_prints_usage
     opener = RecordingOpener.new
     out = run_with_opener([":open", ":quit"], opener: opener)
-    assert_match(/usage: :open \$LX/, out)
+    assert_match(/usage: :open \$XX or \$LX/, out)
     assert_empty opener.calls
+  end
+
+  def test_open_with_post_id_opens_bsky_app_url_for_assigned_post
+    client = OpenableTimelineClient.new
+    opener = RecordingOpener.new
+    runner = Tempest::REPL::Runner.new(
+      session: @session, client: client,
+      input: StubReader.new([":timeline", ":open $AA", ":quit"]),
+      output: @output, opener: opener,
+    )
+    runner.run
+
+    assert_equal ["https://bsky.app/profile/alice.bsky.social/post/p"], opener.calls
+  end
+
+  def test_open_with_post_id_falls_back_to_did_when_handle_is_missing
+    handleless = Tempest::Post.new(
+      uri: "at://did:plc:nobody/app.bsky.feed.post/abc",
+      cid: "bafy",
+      handle: nil,
+      display_name: nil,
+      text: "hi",
+      created_at: nil,
+    )
+    registry = Tempest::REPL::Registry.new
+    var = registry.assign_post(handleless)
+    opener = RecordingOpener.new
+    runner = Tempest::REPL::Runner.new(
+      session: @session, client: @client,
+      input: StubReader.new([":open #{var}", ":quit"]),
+      output: @output, opener: opener, registry: registry,
+    )
+    runner.run
+
+    assert_equal ["https://bsky.app/profile/did:plc:nobody/post/abc"], opener.calls
+  end
+
+  def test_help_lists_open_with_post_id_form
+    out = run_with([":help", ":quit"])
+    assert_match(/:open \$XX/, out)
   end
 
   def test_open_calls_opener_with_registered_url

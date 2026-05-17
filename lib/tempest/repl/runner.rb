@@ -17,7 +17,7 @@ module Tempest
         Available commands:
           :timeline       Fetch and print the home timeline
           :stream on|off  Toggle the Jetstream live feed
-          :open $LX       Open the URL with id $LX in the browser
+          :open $XX|$LX   Open the post or URL with the given id in the browser
           :fav $XX        Like the post with id $XX
           :relogin        Re-authenticate when the cached session is dead
           :help           Show this help
@@ -210,10 +210,16 @@ module Tempest
 
       def handle_open(var)
         if var.nil? || var.empty?
-          @output.puts "usage: :open $LX"
+          @output.puts "usage: :open $XX or $LX"
           return
         end
-        url = @registry.find_url(var)
+
+        if (post = @registry.find_post(var))
+          url = bsky_post_url(post)
+        else
+          url = @registry.find_url(var)
+        end
+
         if url.nil?
           @output.puts "unknown id: #{var}"
           return
@@ -224,6 +230,22 @@ module Tempest
 
       def reply_uri_for(target)
         target.respond_to?(:uri) && target.uri ? target.uri : target.at_uri
+      end
+
+      # bsky.app accepts both handles and DIDs in the profile path. Prefer the
+      # handle when we have it (human-readable URLs are nicer for sharing or
+      # for the user to glance at), but fall back to the DID for posts that
+      # arrived through Jetstream where only the DID is known.
+      def bsky_post_url(target)
+        at_uri = reply_uri_for(target)
+        match = at_uri.match(%r{\Aat://([^/]+)/app\.bsky\.feed\.post/(.+)\z})
+        return nil unless match
+
+        did = match[1]
+        rkey = match[2]
+        handle = target.respond_to?(:handle) ? target.handle : nil
+        profile = handle && !handle.empty? ? handle : did
+        "https://bsky.app/profile/#{profile}/post/#{rkey}"
       end
 
       def handle_stream(arg)
