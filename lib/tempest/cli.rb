@@ -7,6 +7,7 @@ require_relative "cursor_store"
 require_relative "timeline_store"
 require_relative "xrpc_client"
 require_relative "handle_resolver"
+require_relative "avatar_store"
 require_relative "follows"
 require_relative "jetstream/client"
 require_relative "jetstream/stream_manager"
@@ -45,6 +46,11 @@ module Tempest
 
       handle_resolver = Tempest::HandleResolver.new(client: client)
       handle_resolver.seed(session.did, session.handle)
+
+      avatar_store = Tempest::AvatarStore.new(
+        client: client,
+        cache_dir: avatar_cache_dir(env),
+      )
 
       mode = feed_mode(argv: argv, env: env)
       plan = build_subscription(
@@ -86,6 +92,7 @@ module Tempest
         stream_output: screen.enabled? ? screen : Tempest::REPL::AsyncOutput.new(stdout),
         stream_manager: stream_manager,
         handle_resolver: handle_resolver,
+        avatar_store: avatar_store,
         timeline_store: timeline_store(env),
         opener: opener_for(env: env),
       )
@@ -192,6 +199,14 @@ module Tempest
 
     def timeline_store(env)
       Tempest::TimelineStore.new(path: Tempest::TimelineStore.default_path(env))
+    end
+
+    def avatar_cache_dir(env)
+      override = env["TEMPEST_AVATAR_CACHE_DIR"]
+      return override if override && !override.empty?
+      base = env["XDG_CACHE_HOME"]
+      base = File.join(env["HOME"] || Dir.home, ".cache") if base.nil? || base.empty?
+      File.join(base, "tempest", "avatars")
     end
 
     def opener_for(env:, system_proc: Kernel.method(:system))

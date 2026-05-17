@@ -30,7 +30,8 @@ module Tempest
 
       def initialize(session:, client:, input:, output:, dispatcher: Dispatcher.new,
                      stream_manager: nil, handle_resolver: nil, stream_output: nil,
-                     timeline_store: nil, registry: Registry.new, opener: DEFAULT_OPENER)
+                     timeline_store: nil, registry: Registry.new, opener: DEFAULT_OPENER,
+                     avatar_store: nil)
         @session = session
         @client = client
         @input = input
@@ -42,6 +43,7 @@ module Tempest
         @timeline_store = timeline_store
         @registry = registry
         @opener = opener
+        @avatar_store = avatar_store
         # URIs already printed via bootstrap_timeline or backfill_timeline.
         # Jetstream's cursor-replay can re-emit those same posts on startup
         # (the persisted cursor is older than the getTimeline window), so the
@@ -121,7 +123,7 @@ module Tempest
         if posts.empty?
           @output.puts "(empty timeline)"
         else
-          posts.reverse_each { |post| @output.puts Formatter.post_line(post, registry: @registry) }
+          posts.reverse_each { |post| @output.puts Formatter.post_line(post, registry: @registry, avatar_store: @avatar_store) }
           @timeline_store&.save(posts: posts.reverse)
         end
       rescue Tempest::Error => e
@@ -209,7 +211,7 @@ module Tempest
           return unless event.post? || event.like? || event.repost?
           return if event.post? && @displayed_post_uris.include?(event.at_uri)
 
-          @stream_output.puts Formatter.event_line(event, registry: @registry, resolver: @handle_resolver)
+          @stream_output.puts Formatter.event_line(event, registry: @registry, resolver: @handle_resolver, avatar_store: @avatar_store)
           @displayed_post_uris << event.at_uri if event.post?
         end
       end
@@ -225,7 +227,7 @@ module Tempest
       end
 
       def print_post(post, output: @output)
-        output.puts Formatter.post_line(post, registry: @registry)
+        output.puts Formatter.post_line(post, registry: @registry, avatar_store: @avatar_store)
         @displayed_post_uris << post.uri
       end
     end

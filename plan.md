@@ -125,7 +125,7 @@ Asynchronous path:
 
 ### Wiring
 
-- [ ] `Tempest::CLI` builds an `AvatarStore` and passes it through to the
+- [x] `Tempest::CLI` builds an `AvatarStore` and passes it through to the
       `Runner` and `Formatter`. Smoke-test via the existing CLI test if
       possible; otherwise add a minimal new test.
 - [ ] Manual verification: run tempest against the live timeline in cmux and
