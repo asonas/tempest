@@ -462,6 +462,42 @@ class TestCLI < Minitest::Test
   end
 end
 
+class TestCLIWhoami < Minitest::Test
+  def test_whoami_routes_through_dispatcher
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "session.json")
+      seed = Tempest::Session.new(
+        access_jwt: "a", refresh_jwt: "r",
+        did: "did:plc:abc", handle: "asonas.bsky.social",
+        pds_host: "https://bsky.social",
+      )
+      Tempest::SessionStore.new(path: path).save(seed, identifier: "asonas.bsky.social")
+
+      stub_request(:post, "https://bsky.social/xrpc/com.atproto.server.refreshSession")
+        .with(headers: { "Authorization" => "Bearer r" })
+        .to_return(
+          status: 200,
+          headers: { "Content-Type" => "application/json" },
+          body: {
+            accessJwt: "a2",
+            refreshJwt: "r2",
+            did: "did:plc:abc",
+            handle: "asonas.bsky.social",
+          }.to_json,
+        )
+
+      out = StringIO.new
+      status = Tempest::CLI.run(
+        argv: ["whoami"],
+        env: { "TEMPEST_SESSION_PATH" => path },
+        stdout: out, stderr: StringIO.new,
+      )
+      assert_equal 0, status
+      assert_match(/@asonas.bsky.social/, out.string)
+    end
+  end
+end
+
 class TestCLIRouting < Minitest::Test
   def test_unknown_subcommand_returns_64_and_writes_to_stderr
     err = StringIO.new
