@@ -150,6 +150,54 @@ class TestPostCreate < Minitest::Test
     _, body = client.calls.first
     refute body[:record].key?("reply")
   end
+
+  def test_create_attaches_link_facet_for_url_in_text
+    client = FakeClient.new("uri" => "at://x")
+    Tempest::Post.create(client, did: "did:plc:abc", text: "see https://example.com")
+
+    _, body = client.calls.first
+    facets = body[:record]["facets"]
+    assert_equal 1, facets.length
+    facet = facets.first
+    assert_equal 4, facet["index"]["byteStart"]
+    assert_equal "see https://example.com".bytesize, facet["index"]["byteEnd"]
+    assert_equal "app.bsky.richtext.facet#link", facet["features"].first["$type"]
+    assert_equal "https://example.com", facet["features"].first["uri"]
+  end
+
+  def test_create_omits_facets_when_text_has_no_url
+    client = FakeClient.new("uri" => "at://x")
+    Tempest::Post.create(client, did: "did:plc:abc", text: "no url here")
+    _, body = client.calls.first
+    refute body[:record].key?("facets")
+  end
+
+  def test_create_attaches_one_facet_per_url
+    client = FakeClient.new("uri" => "at://x")
+    Tempest::Post.create(
+      client, did: "did:plc:abc",
+      text: "a https://a.example/x b https://b.example/y c",
+    )
+
+    _, body = client.calls.first
+    facets = body[:record]["facets"]
+    assert_equal 2, facets.length
+    assert_equal "https://a.example/x", facets[0]["features"].first["uri"]
+    assert_equal "https://b.example/y", facets[1]["features"].first["uri"]
+  end
+
+  def test_create_uses_byte_offsets_for_url_after_multibyte_text
+    text = "見て https://example.com いいよね"
+    client = FakeClient.new("uri" => "at://x")
+    Tempest::Post.create(client, did: "did:plc:abc", text: text)
+
+    _, body = client.calls.first
+    facet = body[:record]["facets"].first
+    expected_start = "見て ".bytesize
+    expected_end = expected_start + "https://example.com".bytesize
+    assert_equal expected_start, facet["index"]["byteStart"]
+    assert_equal expected_end, facet["index"]["byteEnd"]
+  end
 end
 
 class TestPostFromFeedView < Minitest::Test
