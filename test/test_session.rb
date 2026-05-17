@@ -155,6 +155,71 @@ class TestSession < Minitest::Test
     assert_equal new_refresh, received.refresh_jwt
   end
 
+  def test_refresh_skips_when_if_unchanged_from_no_longer_matches
+    new_access = fake_jwt(exp: Time.now.to_i + 3600)
+    session = Tempest::Session.new(
+      access_jwt: new_access,
+      refresh_jwt: fake_jwt(exp: Time.now.to_i + 86_400),
+      did: "did:plc:abcdef",
+      handle: "asonas.bsky.social",
+      pds_host: "https://bsky.social",
+    )
+
+    stale_jwt = fake_jwt(exp: Time.now.to_i - 60)
+
+    session.refresh!(if_unchanged_from: stale_jwt)
+
+    assert_not_requested :post, "https://bsky.social/xrpc/com.atproto.server.refreshSession"
+    assert_equal new_access, session.access_jwt
+  end
+
+  def test_refresh_serializes_concurrent_callers_into_single_http_call
+    old_refresh = fake_jwt(exp: Time.now.to_i + 86_400)
+    old_access = fake_jwt(exp: Time.now.to_i - 60)
+    new_access = fake_jwt(exp: Time.now.to_i + 3600)
+    new_refresh = fake_jwt(exp: Time.now.to_i + 172_800)
+
+    session = Tempest::Session.new(
+      access_jwt: old_access,
+      refresh_jwt: old_refresh,
+      did: "did:plc:abcdef",
+      handle: "asonas.bsky.social",
+      pds_host: "https://bsky.social",
+    )
+
+    started = Queue.new
+    release = Queue.new
+
+    stub_request(:post, "https://bsky.social/xrpc/com.atproto.server.refreshSession")
+      .to_return do
+        started << :go
+        release.pop
+        {
+          status: 200,
+          headers: { "Content-Type" => "application/json" },
+          body: {
+            accessJwt: new_access,
+            refreshJwt: new_refresh,
+            did: "did:plc:abcdef",
+            handle: "asonas.bsky.social",
+          }.to_json,
+        }
+      end
+
+    t1 = Thread.new { session.refresh!(if_unchanged_from: old_access) }
+    started.pop
+    t2 = Thread.new { session.refresh!(if_unchanged_from: old_access) }
+
+    sleep 0.05
+    release << :go
+
+    t1.join
+    t2.join
+
+    assert_requested :post, "https://bsky.social/xrpc/com.atproto.server.refreshSession", times: 1
+    assert_equal new_access, session.access_jwt
+  end
+
   def test_refresh_replaces_tokens
     old_refresh = fake_jwt(exp: Time.now.to_i + 86_400)
     new_access = fake_jwt(exp: Time.now.to_i + 3600)

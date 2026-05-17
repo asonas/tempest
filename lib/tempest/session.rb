@@ -46,6 +46,7 @@ module Tempest
       @handle = handle
       @pds_host = pds_host
       @identifier = identifier
+      @refresh_mutex = Mutex.new
     end
 
     def access_expired?
@@ -54,7 +55,25 @@ module Tempest
       Time.now.to_i + EXPIRY_LEEWAY_SECONDS >= exp
     end
 
-    def refresh!
+    # Refreshes the session using the current refresh_jwt.
+    #
+    # When `if_unchanged_from:` is supplied, the refresh is skipped if the
+    # session's access_jwt has already moved past that value. Combined with the
+    # internal mutex, this lets concurrent callers coalesce a single
+    # refreshSession round-trip: the first caller refreshes while the rest wait
+    # for the lock and then observe the new token, no-op'ing instead of issuing
+    # duplicate refresh requests.
+    def refresh!(if_unchanged_from: nil)
+      @refresh_mutex.synchronize do
+        return self if if_unchanged_from && @access_jwt != if_unchanged_from
+
+        perform_refresh
+      end
+    end
+
+    private
+
+    def perform_refresh
       url = "#{@pds_host}/xrpc/com.atproto.server.refreshSession"
       response = Tempest::HTTP.post_json(
         url,
@@ -76,8 +95,6 @@ module Tempest
       @on_change&.call(self)
       self
     end
-
-    private
 
     def jwt_exp(token)
       _, payload, _ = token.split(".")

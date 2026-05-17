@@ -38,10 +38,11 @@ module Tempest
     end
 
     def perform
-      response = yield(@session.access_jwt)
+      attempted_jwt = @session.access_jwt
+      response = yield(attempted_jwt)
 
       if auth_expired_response?(response)
-        @session.refresh!
+        @session.refresh!(if_unchanged_from: attempted_jwt)
         response = yield(@session.access_jwt)
       end
 
