@@ -3,6 +3,7 @@ require_relative "commands/tui"
 require_relative "commands/base"
 require_relative "commands/whoami"
 require_relative "commands/post"
+require_relative "commands/feed"
 require_relative "xrpc_client"
 
 module Tempest
@@ -32,26 +33,39 @@ module Tempest
           argv: rest, env: env, stdout: stdout, stderr: stderr, stdin: stdin,
           session_factory: session_factory, store: store,
         )
-      when head == "post"
-        session = Tempest::Commands::Base.authenticate(env: env, stderr: stderr)
-        return 3 if session.nil?
-        Tempest::Commands::Post.call(
-          argv: argv.drop(1), session: session,
-          client: Tempest::XRPCClient.new(session),
-          stdout: stdout, stderr: stderr, stdin: stdin,
-        )
-      when head == "whoami"
-        session = Tempest::Commands::Base.authenticate(env: env, stderr: stderr)
-        return 3 if session.nil?
-        Tempest::Commands::Whoami.call(
-          argv: argv.drop(1), session: session, stdout: stdout, stderr: stderr,
-        )
       when SUBCOMMANDS.include?(head)
-        stderr.puts "subcommand not implemented yet: #{head}"
-        1
+        begin
+          dispatch_subcommand(head, argv, env: env, stdout: stdout, stderr: stderr, stdin: stdin)
+        rescue Tempest::Error, ArgumentError => e
+          stderr.puts "error: #{e.message}"
+          Tempest::Commands::Base.exit_code_for(e)
+        end
       else
         stderr.puts "unknown command: #{head.inspect}"
         64
+      end
+    end
+
+    def dispatch_subcommand(head, argv, env:, stdout:, stderr:, stdin:)
+      session = Tempest::Commands::Base.authenticate(env: env, stderr: stderr)
+      return 3 if session.nil?
+      client = Tempest::XRPCClient.new(session)
+      case head
+      when "whoami"
+        Tempest::Commands::Whoami.call(
+          argv: argv.drop(1), session: session,
+          stdout: stdout, stderr: stderr,
+        )
+      when "post"
+        Tempest::Commands::Post.call(
+          argv: argv.drop(1), session: session, client: client,
+          stdout: stdout, stderr: stderr, stdin: stdin,
+        )
+      when "feed"
+        Tempest::Commands::Feed.call(
+          argv: argv.drop(1), session: session, client: client,
+          stdout: stdout, stderr: stderr,
+        )
       end
     end
 
