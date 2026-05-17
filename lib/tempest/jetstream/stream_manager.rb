@@ -143,6 +143,12 @@ module Tempest
               now = @clock.call
               @mutex.synchronize { @last_event_at = now }
               if event.respond_to?(:time_us) && event.time_us
+                # Replay protection: when reconnecting with a preserved cursor,
+                # Jetstream re-yields events at or below the cursor (the cursor
+                # is inclusive). Drop them so downstream sees each event once.
+                # last_event_at above is still updated, so the watchdog
+                # correctly sees the connection as alive.
+                next if cursor && event.time_us <= cursor
                 cursor = event.time_us
                 @mutex.synchronize { @cursor_state[:live] = cursor }
                 if @cursor_store && cursor != last_saved_cursor

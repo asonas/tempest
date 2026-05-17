@@ -625,6 +625,46 @@ class TestREPLRunner < Minitest::Test
     assert_equal 1, out.scan("newer").length
   end
 
+  # When the watchdog force-reconnects on a quiet stream, Jetstream replays
+  # events from the saved cursor. The last event we already rendered will be
+  # re-yielded; the runner must dedupe it so it does not print again.
+  def test_stream_post_event_is_deduped_when_replayed_after_reconnect
+    require "tempest/jetstream/decoder"
+    stream = FakeStreamManager.new
+
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:a", time_us: 1000,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "z", cid: "bafyz", text: "only once", created_at: "2026-05-15T02:00:00.000Z",
+    )
+
+    steps = [
+      { line: ":stream on" },
+      {
+        emit: -> {
+          stream.emit(event)
+          stream.emit(Tempest::Jetstream::StreamError.new(StandardError.new("forced reconnect")))
+          stream.emit(Tempest::Jetstream::StreamStatus.new(state: :disconnected, reason: :error))
+          stream.emit(Tempest::Jetstream::StreamStatus.new(state: :reconnecting))
+          stream.emit(Tempest::Jetstream::StreamStatus.new(state: :live))
+          stream.emit(event)
+        },
+        line: ":quit",
+      },
+    ]
+
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: EmittingReader.new(steps),
+      output: @output,
+      stream_manager: stream,
+    )
+    runner.run
+
+    assert_equal 1, @output.string.scan("only once").length
+  end
+
   # A stream event whose URI was not printed during bootstrap should still
   # be rendered normally.
   def test_stream_post_event_not_in_bootstrap_is_still_printed

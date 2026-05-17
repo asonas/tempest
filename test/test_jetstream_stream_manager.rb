@@ -686,6 +686,44 @@ class TestJetstreamStreamManager < Minitest::Test
     assert_equal boom, errors.pop.cause
   end
 
+  # On force_reconnect (and on any reconnect that preserves the cursor),
+  # Jetstream replays events from the cursor inclusive — the very event whose
+  # time_us became the cursor is re-yielded by each_event. We must drop those
+  # replays at the manager level so on_event doesn't see the same post twice.
+  def test_does_not_re_emit_events_at_or_below_previous_cursor_after_reconnect
+    event_200 = make_event(time_us: 200, text: "first")
+    event_300 = make_event(time_us: 300, text: "second")
+
+    client = ScriptedClient.new([
+      [event_200],                      # initial connection: yield then close
+      [event_200, event_300],           # reconnect replays event_200, then a new one
+      nil,
+    ])
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: client,
+      backoff: [0],
+      sleeper: ->(_) {},
+      clock: -> { Time.at(0) },
+    )
+
+    delivered = Queue.new
+    manager.start do |e|
+      delivered << e if e.is_a?(Tempest::Jetstream::Event)
+    end
+
+    100.times do
+      break if client.cursors_seen.length >= 3
+      sleep 0.005
+    end
+    client.release_all
+    manager.stop
+
+    texts = []
+    texts << delivered.pop.text until delivered.empty?
+    assert_equal ["first", "second"], texts,
+      "the replayed event_200 must not be delivered a second time"
+  end
+
   def test_reconnects_with_last_time_us_as_cursor_after_clean_disconnect
     client = ScriptedClient.new([
       [make_event(time_us: 100), make_event(time_us: 200)],
