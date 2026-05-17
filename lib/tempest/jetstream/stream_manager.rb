@@ -66,17 +66,29 @@ module Tempest
 
       def run(on_event)
         Thread.current.report_on_exception = false
-        cursor = load_initial_cursor
+        cursor, startup_gap_since = load_initial_cursor
+        if startup_gap_since
+          on_event.call(StreamStatus.new(state: :gapped, since: startup_gap_since))
+        end
         last_saved_cursor = cursor
         last_save_at = nil
-        disconnected_at = nil
         attempt = 0
 
         until stopping?
-          if attempt > 0 && disconnected_at && cursor
-            offline = @clock.call - disconnected_at
-            if offline > CURSOR_WINDOW_SECONDS
-              on_event.call(StreamStatus.new(state: :gapped, since: disconnected_at))
+          # Detect a long offline gap from the cursor's age rather than from
+          # wall-clock disconnect timestamps. When the host machine sleeps,
+          # the background thread is suspended and we only learn about the
+          # outage at wake time — `disconnected_at` would therefore reflect
+          # the wake time, not the actual go-offline time, and the window
+          # check would never fire. The cursor (a unix-microseconds event
+          # timestamp from Jetstream) is unaffected by our suspension, so its
+          # age is a reliable proxy for "how long since we last saw events".
+          if attempt > 0 && cursor
+            cursor_age = @clock.call.to_f - (cursor / 1_000_000.0)
+            if cursor_age > CURSOR_WINDOW_SECONDS
+              on_event.call(
+                StreamStatus.new(state: :gapped, since: Time.at(cursor / 1_000_000.0)),
+              )
               cursor = nil
             end
           end
@@ -115,13 +127,13 @@ module Tempest
 
           break if stopping?
 
-          disconnected_at = @clock.call
           # Force a final save on disconnect so we don't lose the tail between
           # the throttle interval and the connection drop.
           if @cursor_store && cursor && cursor != last_saved_cursor
-            @cursor_store.save(time_us: cursor, at: disconnected_at)
+            now = @clock.call
+            @cursor_store.save(time_us: cursor, at: now)
             last_saved_cursor = cursor
-            last_save_at = disconnected_at
+            last_save_at = now
             @mutex.synchronize { @cursor_state[:saved] = cursor }
           end
 
@@ -143,13 +155,17 @@ module Tempest
         @mutex.synchronize { @stopping }
       end
 
+      # Returns [cursor, gap_since]. `gap_since` is non-nil when a persisted
+      # cursor existed but is too old to replay safely; the caller emits
+      # :gapped (so the Runner backfills via getTimeline) and subscribes
+      # without a cursor.
       def load_initial_cursor
-        return nil unless @cursor_store
+        return [nil, nil] unless @cursor_store
         stored = @cursor_store.load
-        return nil unless stored && stored[:time_us] && stored[:saved_at]
+        return [nil, nil] unless stored && stored[:time_us] && stored[:saved_at]
         age = @clock.call - stored[:saved_at]
-        return nil if age > CURSOR_WINDOW_SECONDS
-        stored[:time_us]
+        return [nil, stored[:saved_at]] if age > CURSOR_WINDOW_SECONDS
+        [stored[:time_us], nil]
       end
 
       # Called from `stop` after the worker thread has been killed. Ensures the

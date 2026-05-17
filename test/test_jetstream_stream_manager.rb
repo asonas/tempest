@@ -318,7 +318,9 @@ class TestJetstreamStreamManager < Minitest::Test
       client: client,
       backoff: [0],
       sleeper: ->(_) {},
-      clock: -> { base },
+      # Anchor the clock near the tiny scripted time_us values so the cursor
+      # never looks stale (cursor age = clock - cursor_time / 1e6).
+      clock: -> { Time.at(0) },
       filter: ->(event) { event.did == "did:plc:keep" },
     )
 
@@ -394,15 +396,20 @@ class TestJetstreamStreamManager < Minitest::Test
   end
 
   def test_long_offline_emits_gapped_and_drops_cursor
+    # The most recent event we received was emitted 13h ago. On reconnect the
+    # cursor's age (clock - cursor_time) exceeds the 12h replay window, so we
+    # must emit :gapped (with `since` derived from the cursor itself) and drop
+    # the cursor before the next subscription. This models the "Mac slept for
+    # 13h with tempest running" case where `disconnected_at` is unreliable
+    # (the background thread was suspended too).
     base_time = Time.utc(2026, 5, 15, 12, 0, 0)
-    times = [
-      base_time,                           # disconnect captured here
-      base_time + (13 * 60 * 60),          # 13h later: beyond 12h window
-    ]
-    clock = ->() { times.shift || base_time + (24 * 60 * 60) }
+    cursor_time = base_time - (13 * 60 * 60)
+    cursor_us = (cursor_time.to_f * 1_000_000).to_i
+
+    clock = -> { base_time }
 
     client = ScriptedClient.new([
-      [make_event(time_us: 999)],
+      [make_event(time_us: cursor_us)],
       nil,
     ])
     manager = Tempest::Jetstream::StreamManager.new(
@@ -428,7 +435,83 @@ class TestJetstreamStreamManager < Minitest::Test
     assert_equal [nil, nil], client.cursors_seen
     gapped = drain(statuses).find { |s| s.state == :gapped }
     refute_nil gapped, "expected a :gapped status when offline exceeded window"
-    assert_equal base_time, gapped.since
+    assert_in_delta cursor_time.to_f, gapped.since.to_f, 0.001
+  end
+
+  def test_short_offline_preserves_cursor_and_does_not_emit_gapped
+    # The cursor was last advanced 1h ago — well inside the replay window.
+    # The reconnect must reuse the cursor (no :gapped, no dropped cursor).
+    base_time = Time.utc(2026, 5, 15, 12, 0, 0)
+    cursor_time = base_time - (1 * 60 * 60)
+    cursor_us = (cursor_time.to_f * 1_000_000).to_i
+
+    clock = -> { base_time }
+
+    client = ScriptedClient.new([
+      [make_event(time_us: cursor_us)],
+      nil,
+    ])
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: client,
+      backoff: [0],
+      sleeper: ->(_) {},
+      clock: clock,
+    )
+
+    statuses = Queue.new
+    manager.start do |event|
+      statuses << event if event.is_a?(Tempest::Jetstream::StreamStatus)
+    end
+
+    100.times do
+      break if client.cursors_seen.length >= 2
+      sleep 0.005
+    end
+
+    client.release_all
+    manager.stop
+
+    assert_equal [nil, cursor_us], client.cursors_seen
+    refute drain(statuses).any? { |s| s.state == :gapped },
+      "did not expect :gapped for a 1h offline window"
+  end
+
+  def test_stale_persisted_cursor_on_startup_emits_gapped_before_subscribing
+    # A cursor persisted 13h ago is stale. On startup we must:
+    #   1. emit :gapped (so the Runner backfills via getTimeline), and
+    #   2. subscribe without a cursor (live tail only).
+    base_time = Time.utc(2026, 5, 15, 12, 0, 0)
+    stale_saved_at = base_time - (13 * 60 * 60)
+    store = FakeCursorStore.new(initial: {
+      time_us: 9999,
+      saved_at: stale_saved_at,
+    })
+
+    client = ScriptedClient.new([nil])
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: client,
+      backoff: [0],
+      sleeper: ->(_) {},
+      clock: -> { base_time },
+      cursor_store: store,
+    )
+
+    statuses = Queue.new
+    manager.start do |event|
+      statuses << event if event.is_a?(Tempest::Jetstream::StreamStatus)
+    end
+
+    100.times do
+      break if client.cursors_seen.length >= 1
+      sleep 0.005
+    end
+    client.release_all
+    manager.stop
+
+    assert_equal [nil], client.cursors_seen
+    gapped = drain(statuses).find { |s| s.state == :gapped }
+    refute_nil gapped, "expected :gapped to be emitted on startup with a stale persisted cursor"
+    assert_in_delta stale_saved_at.to_f, gapped.since.to_f, 0.001
   end
 
   def drain(queue)
@@ -498,6 +581,9 @@ class TestJetstreamStreamManager < Minitest::Test
       client: client,
       backoff: [0],
       sleeper: ->(_) {},
+      # Anchor the clock near the scripted time_us values so the cursor never
+      # looks stale on reconnect (cursor age = clock - cursor_time / 1e6).
+      clock: -> { Time.at(0) },
     )
 
     statuses = Queue.new
@@ -578,6 +664,8 @@ class TestJetstreamStreamManager < Minitest::Test
       client: client,
       backoff: [0],
       sleeper: ->(_) {},
+      # Anchor the clock near the scripted time_us so the cursor stays fresh.
+      clock: -> { Time.at(0) },
     )
 
     errors = Queue.new
@@ -606,6 +694,8 @@ class TestJetstreamStreamManager < Minitest::Test
       client: client,
       backoff: [0],
       sleeper: ->(_) {},
+      # Anchor the clock near the scripted time_us so the cursor stays fresh.
+      clock: -> { Time.at(0) },
     )
 
     manager.start { |_| }
