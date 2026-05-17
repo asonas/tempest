@@ -1,4 +1,7 @@
 require "fileutils"
+require "net/http"
+require "open3"
+require "tmpdir"
 require "uri"
 
 require_relative "../tempest"
@@ -18,17 +21,76 @@ module Tempest
     # looked yet" (nil). Mirrors the pattern in HandleResolver.
     NOT_FOUND = Object.new.freeze
 
-    def initialize(client:, cache_dir:, fetcher:, converter:, async: true, executor: nil)
+    def initialize(client:, cache_dir:, fetcher: nil, converter: nil, async: true, executor: nil)
       @client = client
       @cache_dir = cache_dir
-      @fetcher = fetcher
-      @converter = converter
+      @fetcher = fetcher || self.class.default_fetcher
+      @converter = converter || self.class.default_converter
       @async = async
       @executor = executor || method(:default_executor)
       @cache = {}
       @pending = {}
       @mutex = Mutex.new
       FileUtils.mkdir_p(@cache_dir)
+    end
+
+    # Production HTTP fetcher used when no fetcher is injected. Returns the
+    # raw bytes and Content-Type header so the converter can pick the right
+    # input format.
+    def self.default_fetcher
+      @default_fetcher ||= lambda do |url|
+        uri = URI(url)
+        res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https") do |http|
+          http.get(uri.request_uri)
+        end
+        unless res.is_a?(Net::HTTPSuccess)
+          raise Tempest::APIError.new(res.code.to_i, { "error" => res.message })
+        end
+        [res.body, res["content-type"].to_s]
+      end
+    end
+
+    # Production format normalizer: shells out to ImageMagick to crop-fit the
+    # avatar into a 128x128 PNG. The crop pads non-square inputs so the Kitty
+    # graphics protocol can render at a consistent 1-row, 2-col aspect.
+    def self.default_converter
+      @default_converter ||= lambda do |bytes, content_type:|
+        ext = ext_for(content_type, bytes)
+        Dir.mktmpdir do |dir|
+          src = File.join(dir, "src.#{ext}")
+          dst = File.join(dir, "out.png")
+          File.binwrite(src, bytes)
+          _out, status = Open3.capture2e(
+            "magick", src,
+            "-resize", "128x128^",
+            "-gravity", "center",
+            "-extent", "128x128",
+            dst,
+          )
+          raise "magick convert failed" unless status.success?
+          File.binread(dst)
+        end
+      end
+    end
+
+    EXT_BY_MIME = {
+      "image/jpeg" => "jpg",
+      "image/jpg" => "jpg",
+      "image/png" => "png",
+      "image/webp" => "webp",
+      "image/gif" => "gif",
+      "image/avif" => "avif",
+    }.freeze
+
+    def self.ext_for(content_type, bytes)
+      mime = content_type.to_s.split(";").first.to_s.strip.downcase
+      return EXT_BY_MIME[mime] if EXT_BY_MIME.key?(mime)
+      head = bytes.byteslice(0, 16).to_s
+      return "jpg"  if head.start_with?("\xFF\xD8\xFF".b)
+      return "png"  if head.start_with?("\x89PNG\r\n\x1A\n".b)
+      return "gif"  if head.start_with?("GIF87a", "GIF89a")
+      return "webp" if head[0, 4] == "RIFF" && head[8, 4] == "WEBP"
+      "bin"
     end
 
     def path_for(did)
