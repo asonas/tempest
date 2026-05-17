@@ -1,8 +1,14 @@
 require_relative "../tempest"
+require_relative "facet"
 
 module Tempest
-  Post = Data.define(:uri, :cid, :handle, :display_name, :text, :created_at) do
+  Post = Data.define(:uri, :cid, :handle, :display_name, :text, :created_at, :facets) do
+    def initialize(uri:, cid:, handle:, display_name:, text:, created_at:, facets: [])
+      super
+    end
+
     def self.from_feed_view(post)
+      post = post || {}
       author = post["author"] || {}
       record = post["record"] || {}
       new(
@@ -12,6 +18,7 @@ module Tempest
         display_name: author["displayName"],
         text: record["text"],
         created_at: record["createdAt"],
+        facets: Facet.parse(record["facets"]),
       )
     end
 

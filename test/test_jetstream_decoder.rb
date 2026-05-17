@@ -164,6 +164,87 @@ class TestJetstreamDecoder < Minitest::Test
     assert_nil event.subject_uri
   end
 
+  def test_decode_parses_link_facets_from_post_record
+    payload = {
+      did: "did:plc:x",
+      time_us: 5,
+      kind: "commit",
+      commit: {
+        operation: "create",
+        collection: "app.bsky.feed.post",
+        rkey: "r",
+        record: {
+          "$type" => "app.bsky.feed.post",
+          text: "see kelloggs",
+          createdAt: "2026-01-01T00:00:00Z",
+          facets: [
+            {
+              index: { byteStart: 4, byteEnd: 12 },
+              features: [
+                { "$type" => "app.bsky.richtext.facet#link",
+                  uri: "https://www.kelloggs.com/full-path" },
+              ],
+            },
+          ],
+        },
+      },
+    }.to_json
+
+    event = decode(payload)
+    assert_equal 1, event.facets.length
+    facet = event.facets.first
+    assert_kind_of Tempest::Facet::Link, facet
+    assert_equal 4, facet.byte_start
+    assert_equal 12, facet.byte_end
+    assert_equal "https://www.kelloggs.com/full-path", facet.uri
+  end
+
+  def test_decode_defaults_facets_to_empty_when_record_has_none
+    payload = {
+      did: "did:plc:x",
+      time_us: 6,
+      kind: "commit",
+      commit: {
+        operation: "create",
+        collection: "app.bsky.feed.post",
+        rkey: "r",
+        record: { "$type" => "app.bsky.feed.post", text: "no facets", createdAt: nil },
+      },
+    }.to_json
+
+    event = decode(payload)
+    assert_equal [], event.facets
+  end
+
+  def test_decode_drops_non_link_facet_features
+    payload = {
+      did: "did:plc:x",
+      time_us: 7,
+      kind: "commit",
+      commit: {
+        operation: "create",
+        collection: "app.bsky.feed.post",
+        rkey: "r",
+        record: {
+          "$type" => "app.bsky.feed.post",
+          text: "hi",
+          createdAt: nil,
+          facets: [
+            {
+              index: { byteStart: 0, byteEnd: 2 },
+              features: [
+                { "$type" => "app.bsky.richtext.facet#tag", tag: "ruby" },
+              ],
+            },
+          ],
+        },
+      },
+    }.to_json
+
+    event = decode(payload)
+    assert_equal [], event.facets
+  end
+
   def test_event_at_uri_concatenates_did_collection_and_rkey
     event = Tempest::Jetstream::Event.new(
       kind: :commit, did: "did:plc:x", time_us: 1,

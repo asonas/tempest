@@ -1,6 +1,77 @@
 require_relative "test_helper"
 require "tempest/post"
 
+class TestPostFromFeedView < Minitest::Test
+  def base_feed_view(record_overrides = {})
+    {
+      "uri" => "at://x",
+      "cid" => "bafy",
+      "author" => { "handle" => "alice.bsky.social", "displayName" => "Alice" },
+      "record" => {
+        "text" => "hello",
+        "createdAt" => "2026-05-15T01:00:00.000Z",
+      }.merge(record_overrides),
+    }
+  end
+
+  def test_from_feed_view_returns_empty_facets_when_record_has_none
+    post = Tempest::Post.from_feed_view(base_feed_view)
+    assert_equal [], post.facets
+  end
+
+  def test_from_feed_view_parses_link_facet_into_facet_link_entry
+    facets = [
+      {
+        "index" => { "byteStart" => 6, "byteEnd" => 25 },
+        "features" => [
+          { "$type" => "app.bsky.richtext.facet#link",
+            "uri" => "https://www.kelloggs.com/ja-jp/products/some-cereal" },
+        ],
+      },
+    ]
+    post = Tempest::Post.from_feed_view(base_feed_view("facets" => facets))
+
+    assert_equal 1, post.facets.length
+    facet = post.facets.first
+    assert_kind_of Tempest::Facet::Link, facet
+    assert_equal 6, facet.byte_start
+    assert_equal 25, facet.byte_end
+    assert_equal "https://www.kelloggs.com/ja-jp/products/some-cereal", facet.uri
+  end
+
+  def test_from_feed_view_drops_non_link_facet_features
+    facets = [
+      {
+        "index" => { "byteStart" => 0, "byteEnd" => 5 },
+        "features" => [
+          { "$type" => "app.bsky.richtext.facet#mention", "did" => "did:plc:x" },
+        ],
+      },
+      {
+        "index" => { "byteStart" => 6, "byteEnd" => 11 },
+        "features" => [
+          { "$type" => "app.bsky.richtext.facet#tag", "tag" => "ruby" },
+        ],
+      },
+      {
+        "index" => { "byteStart" => 12, "byteEnd" => 30 },
+        "features" => [
+          { "$type" => "app.bsky.richtext.facet#link", "uri" => "https://example.com" },
+        ],
+      },
+    ]
+    post = Tempest::Post.from_feed_view(base_feed_view("facets" => facets))
+
+    assert_equal 1, post.facets.length
+    assert_equal "https://example.com", post.facets.first.uri
+  end
+
+  def test_from_feed_view_defaults_facets_when_record_is_missing
+    post = Tempest::Post.from_feed_view({})
+    assert_equal [], post.facets
+  end
+end
+
 class TestPostCreate < Minitest::Test
   class FakeClient
     attr_reader :calls

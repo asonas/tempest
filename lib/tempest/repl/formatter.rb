@@ -33,7 +33,8 @@ module Tempest
 
       def post_line(post, registry: nil)
         var = registry&.assign_post(post)
-        body = annotate_urls(squeeze(post.text), registry)
+        facets = post.respond_to?(:facets) ? post.facets : nil
+        body = annotate_urls(squeeze(post.text), registry, facets: facets)
         body = decorate_body(body)
         compose(var, format_time(post.created_at), post.handle, nil, body)
       end
@@ -80,7 +81,8 @@ module Tempest
           body = "reposted #{subject_owner_label(event.subject_uri, resolver)}"
           var = nil
         else
-          body = annotate_urls(squeeze(event.text), registry)
+          facets = event.respond_to?(:facets) ? event.facets : nil
+          body = annotate_urls(squeeze(event.text), registry, facets: facets)
           body = decorate_body(body)
           var = registry&.assign_post(event)
         end
@@ -102,14 +104,51 @@ module Tempest
         match && match[1]
       end
 
-      def annotate_urls(text, registry)
+      def annotate_urls(text, registry, facets: nil)
         return text unless registry
-        urls = URI.extract(text.to_s, ["http", "https"]).uniq
+        text = text.to_s
+        if facets && !facets.empty?
+          return annotate_urls_with_facets(text, registry, facets)
+        end
+
+        urls = URI.extract(text, ["http", "https"]).uniq
         urls.each do |url|
           var = registry.assign_url(url)
           text = text.sub(url, "#{url} (#{var})")
         end
         text
+      end
+
+      def annotate_urls_with_facets(text, registry, facets)
+        text = text.dup.force_encoding(Encoding::UTF_8)
+        bytesize = text.bytesize
+        valid = facets
+          .select { |f| f.byte_start.is_a?(Integer) && f.byte_end.is_a?(Integer) }
+          .select { |f| f.byte_start >= 0 && f.byte_end <= bytesize && f.byte_start < f.byte_end }
+          .sort_by(&:byte_start)
+
+        # Assign vars in reading order so earlier facets get earlier ids.
+        replacements = valid.map do |facet|
+          var = registry.assign_url(facet.uri)
+          domain = host_of(facet.uri) || facet.uri
+          [facet, "[#{domain} #{var}]"]
+        end
+
+        # Apply substitutions in reverse byte order so earlier ranges remain valid.
+        replacements.reverse_each do |facet, replacement|
+          head = text.byteslice(0, facet.byte_start) || ""
+          tail = text.byteslice(facet.byte_end, text.bytesize - facet.byte_end) || ""
+          text = (head + replacement + tail).force_encoding(Encoding::UTF_8)
+        end
+        text
+      end
+
+      def host_of(uri)
+        parsed = URI.parse(uri)
+        host = parsed.host
+        host && !host.empty? ? host : nil
+      rescue URI::InvalidURIError
+        nil
       end
 
       def squeeze(text)

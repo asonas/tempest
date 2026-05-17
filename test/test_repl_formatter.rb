@@ -299,6 +299,109 @@ class TestREPLFormatter < Minitest::Test
     assert_equal "$AA", registry.assign_post(post)
   end
 
+  def test_post_line_with_registry_uses_facets_to_replace_truncated_url_with_domain_and_id
+    # Japanese surrounds the truncated display URL; the facet's byte range
+    # covers exactly the truncated form. The replacement must use byte
+    # offsets, not character offsets.
+    truncated = "www.kelloggs.com/ja-jp/produc..."
+    prefix = "イライラする "
+    suffix = " 続き"
+    text = prefix + truncated + suffix
+    byte_start = prefix.bytesize
+    byte_end = byte_start + truncated.bytesize
+
+    facet = Tempest::Facet::Link.new(
+      byte_start: byte_start,
+      byte_end: byte_end,
+      uri: "https://www.kelloggs.com/ja-jp/products/some-cereal",
+    )
+    post = Tempest::Post.new(
+      uri: "at://x/1", cid: "bafy",
+      handle: "alice.bsky.social", display_name: nil,
+      text: text, created_at: nil, facets: [facet],
+    )
+    registry = Tempest::REPL::Registry.new
+
+    line = Tempest::REPL::Formatter.post_line(post, registry: registry)
+    assert_equal(
+      "[$AA] @alice.bsky.social: イライラする [www.kelloggs.com $LA] 続き",
+      line,
+    )
+    assert_equal "https://www.kelloggs.com/ja-jp/products/some-cereal",
+                 registry.find_url("$LA")
+  end
+
+  def test_post_line_with_two_facets_substitutes_each_at_correct_byte_range
+    # Pass facets in NON-sorted order to verify the formatter applies them in
+    # reverse byte_start order so earlier ranges remain valid.
+    a = "https://a.example/aa"
+    b = "https://b.example/bb"
+    text = "first #{a} mid #{b} end"
+    a_start = "first ".bytesize
+    a_end = a_start + a.bytesize
+    b_start = a_end + " mid ".bytesize
+    b_end = b_start + b.bytesize
+
+    facet_b = Tempest::Facet::Link.new(byte_start: b_start, byte_end: b_end, uri: b)
+    facet_a = Tempest::Facet::Link.new(byte_start: a_start, byte_end: a_end, uri: a)
+    post = Tempest::Post.new(
+      uri: "at://x/1", cid: "bafy",
+      handle: "alice.bsky.social", display_name: nil,
+      text: text, created_at: nil,
+      facets: [facet_b, facet_a],
+    )
+    registry = Tempest::REPL::Registry.new
+
+    line = Tempest::REPL::Formatter.post_line(post, registry: registry)
+    assert_equal(
+      "[$AA] @alice.bsky.social: first [a.example $LA] mid [b.example $LB] end",
+      line,
+    )
+    assert_equal a, registry.find_url("$LA")
+    assert_equal b, registry.find_url("$LB")
+  end
+
+  def test_post_line_without_facets_falls_back_to_uri_extract_annotation
+    post = Tempest::Post.new(
+      uri: "at://x/1", cid: "bafy",
+      handle: "alice.bsky.social", display_name: nil,
+      text: "see https://example.com",
+      created_at: nil,
+      facets: [],
+    )
+    registry = Tempest::REPL::Registry.new
+
+    line = Tempest::REPL::Formatter.post_line(post, registry: registry)
+    assert_equal "[$AA] @alice.bsky.social: see https://example.com ($LA)", line
+    assert_equal "https://example.com", registry.find_url("$LA")
+  end
+
+  def test_event_line_with_facets_substitutes_truncated_url_with_domain_and_id
+    text = "see www.kelloggs.com/ja-jp/produc... now"
+    byte_start = "see ".bytesize
+    byte_end = byte_start + "www.kelloggs.com/ja-jp/produc...".bytesize
+    facet = Tempest::Facet::Link.new(
+      byte_start: byte_start, byte_end: byte_end,
+      uri: "https://www.kelloggs.com/ja-jp/products/some-cereal",
+    )
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:x", time_us: 1,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "r", cid: "bafy",
+      text: text, created_at: nil,
+      facets: [facet],
+    )
+    registry = Tempest::REPL::Registry.new
+
+    line = Tempest::REPL::Formatter.event_line(event, registry: registry)
+    assert_equal(
+      "[$AA] <did:plc:x>: see [www.kelloggs.com $LA] now",
+      line,
+    )
+    assert_equal "https://www.kelloggs.com/ja-jp/products/some-cereal",
+                 registry.find_url("$LA")
+  end
+
   def test_event_line_with_registry_does_not_assign_id_for_like
     event = Tempest::Jetstream::Event.new(
       kind: :commit, did: "did:plc:actor", time_us: 1,

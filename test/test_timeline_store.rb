@@ -1,7 +1,9 @@
 require_relative "test_helper"
 require "tempest/timeline_store"
 require "tempest/post"
+require "tempest/facet"
 require "fileutils"
+require "json"
 require "tmpdir"
 
 class TestTimelineStore < Minitest::Test
@@ -69,6 +71,45 @@ class TestTimelineStore < Minitest::Test
   def test_default_path_honors_tempest_timeline_path_override
     env = { "TEMPEST_TIMELINE_PATH" => "/custom/timeline.json" }
     assert_equal "/custom/timeline.json", Tempest::TimelineStore.default_path(env)
+  end
+
+  def test_save_and_load_preserves_link_facets
+    store = Tempest::TimelineStore.new(path: @path)
+    facet = Tempest::Facet::Link.new(
+      byte_start: 6, byte_end: 25, uri: "https://example.com/long/path",
+    )
+    post = Tempest::Post.new(
+      uri: "at://x", cid: "bafy",
+      handle: "a", display_name: nil, text: "hello example.com/lo...",
+      created_at: "2026-05-15T09:00:00.000Z",
+      facets: [facet],
+    )
+
+    store.save(posts: [post])
+    loaded = store.load
+
+    assert_equal [facet], loaded[:posts].first.facets
+  end
+
+  def test_load_tolerates_old_snapshots_without_facets
+    FileUtils.mkdir_p(File.dirname(@path))
+    payload = {
+      "posts" => [
+        {
+          "uri" => "at://x", "cid" => "bafy",
+          "handle" => "a", "display_name" => nil,
+          "text" => "old", "created_at" => "2026-05-15T09:00:00.000Z",
+        },
+      ],
+      "saved_at" => "2026-05-15T09:30:00.000000Z",
+    }
+    File.write(@path, JSON.generate(payload))
+
+    store = Tempest::TimelineStore.new(path: @path)
+    loaded = store.load
+
+    refute_nil loaded
+    assert_equal [], loaded[:posts].first.facets
   end
 
   def test_save_trims_to_most_recent_fifty_posts

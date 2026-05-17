@@ -4,6 +4,7 @@ require "time"
 
 require_relative "../tempest"
 require_relative "post"
+require_relative "facet"
 
 module Tempest
   # Persists the home timeline snapshot so a restarted tempest can show the
@@ -66,6 +67,7 @@ module Tempest
         "display_name" => post.display_name,
         "text" => post.text,
         "created_at" => post.created_at,
+        "facets" => post.facets.map { |f| serialize_facet(f) },
       }
     end
 
@@ -77,7 +79,28 @@ module Tempest
         display_name: hash["display_name"],
         text: hash["text"],
         created_at: hash["created_at"],
+        facets: deserialize_facets(hash["facets"]),
       )
+    end
+
+    def serialize_facet(facet)
+      {
+        "byte_start" => facet.byte_start,
+        "byte_end" => facet.byte_end,
+        "uri" => facet.uri,
+      }
+    end
+
+    def deserialize_facets(raw)
+      return [] unless raw.is_a?(Array)
+      raw.filter_map do |hash|
+        next nil unless hash.is_a?(Hash)
+        byte_start = hash["byte_start"]
+        byte_end = hash["byte_end"]
+        uri = hash["uri"]
+        next nil unless byte_start.is_a?(Integer) && byte_end.is_a?(Integer) && uri.is_a?(String)
+        Facet::Link.new(byte_start: byte_start, byte_end: byte_end, uri: uri)
+      end
     end
   end
 end

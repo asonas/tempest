@@ -697,4 +697,54 @@ class TestREPLRunner < Minitest::Test
     end
     def post(*) ; {} ; end
   end
+
+  class FacetTimelineClient
+    TRUNCATED = "www.kelloggs.com/ja-jp/produc...".freeze
+    REAL_URL = "https://www.kelloggs.com/ja-jp/products/some-cereal".freeze
+
+    def get(nsid, query: nil)
+      raise "unexpected nsid #{nsid}" unless nsid == "app.bsky.feed.getTimeline"
+      text = "イライラする #{TRUNCATED} 続き"
+      byte_start = "イライラする ".bytesize
+      byte_end = byte_start + TRUNCATED.bytesize
+      {
+        "feed" => [
+          {
+            "post" => {
+              "uri" => "at://did:plc:a/app.bsky.feed.post/k",
+              "cid" => "bafy",
+              "author" => { "handle" => "alice.bsky.social" },
+              "record" => {
+                "text" => text,
+                "createdAt" => "2026-05-15T00:00:00.000Z",
+                "facets" => [
+                  {
+                    "index" => { "byteStart" => byte_start, "byteEnd" => byte_end },
+                    "features" => [
+                      { "$type" => "app.bsky.richtext.facet#link", "uri" => REAL_URL },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      }
+    end
+    def post(*) ; {} ; end
+  end
+
+  def test_open_with_facet_url_passes_real_uri_not_truncated
+    client = FacetTimelineClient.new
+    opener = RecordingOpener.new
+    runner = Tempest::REPL::Runner.new(
+      session: @session, client: client,
+      input: StubReader.new([":timeline", ":open $LA", ":quit"]),
+      output: @output, opener: opener,
+    )
+    runner.run
+
+    assert_equal [FacetTimelineClient::REAL_URL], opener.calls
+    assert_match(/\[www\.kelloggs\.com \$LA\]/, @output.string)
+  end
 end

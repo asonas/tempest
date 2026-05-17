@@ -1,6 +1,7 @@
 require "json"
 
 require_relative "../../tempest"
+require_relative "../facet"
 
 module Tempest
   module Jetstream
@@ -15,9 +16,10 @@ module Tempest
       :text,
       :created_at,
       :subject_uri,
+      :facets,
     ) do
       def initialize(kind:, did:, time_us:, collection:, operation:, rkey:, cid:,
-                     text:, created_at:, subject_uri: nil)
+                     text:, created_at:, subject_uri: nil, facets: [])
         super
       end
 
@@ -64,6 +66,7 @@ module Tempest
           text: record["text"],
           created_at: record["createdAt"],
           subject_uri: subject.is_a?(Hash) ? subject["uri"] : nil,
+          facets: Tempest::Facet.parse(record["facets"]),
         )
       rescue JSON::ParserError
         nil
