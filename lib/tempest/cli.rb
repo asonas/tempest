@@ -100,6 +100,7 @@ module Tempest
         avatar_store: avatar_store,
         timeline_store: timeline_store(env),
         opener: opener_for(env: env),
+        reauth: build_reauth(env, stdout, stdin, session_factory),
       )
 
       begin
@@ -153,6 +154,17 @@ module Tempest
 
     def nil_if_empty(value)
       value.nil? || value.empty? ? nil : value
+    end
+
+    # Builds the proc REPL::Runner uses to honour `:relogin`. The lambda
+    # re-reads credentials from `env` on each call (so a user can update env
+    # in-process if needed) and goes through the same 2FA prompt path as
+    # initial sign-in.
+    def build_reauth(env, stdout, stdin, session_factory)
+      lambda do
+        config = Tempest::Config.from_env(env)
+        create_with_2fa(config, env, stdout, stdin, session_factory)
+      end
     end
 
     def create_with_2fa(config, env, stdout, stdin, session_factory)

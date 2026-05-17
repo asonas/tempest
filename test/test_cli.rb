@@ -194,6 +194,47 @@ class TestCLI < Minitest::Test
     end
   end
 
+  def test_build_reauth_invokes_session_factory_with_env_credentials
+    captured_config = nil
+    captured_token = nil
+    fresh = Tempest::Session.new(
+      access_jwt: "fresh-a",
+      refresh_jwt: "fresh-r",
+      did: "did:plc:x",
+      handle: "asonas.bsky.social",
+      pds_host: "https://bsky.social",
+    )
+    factory = ->(config, auth_factor_token: nil) do
+      captured_config = config
+      captured_token = auth_factor_token
+      fresh
+    end
+
+    env = {
+      "TEMPEST_IDENTIFIER" => "asonas.bsky.social",
+      "TEMPEST_APP_PASSWORD" => "xxxx",
+    }
+
+    reauth = Tempest::CLI.build_reauth(env, StringIO.new, StringIO.new, factory)
+    result = reauth.call
+
+    assert_same fresh, result
+    assert_equal "asonas.bsky.social", captured_config.identifier
+    assert_nil captured_token
+  end
+
+  def test_build_reauth_propagates_authentication_error
+    factory = ->(*_args, **_kwargs) { raise Tempest::AuthenticationError.new("bad creds", code: "AuthenticationRequired") }
+    env = {
+      "TEMPEST_IDENTIFIER" => "asonas.bsky.social",
+      "TEMPEST_APP_PASSWORD" => "xxxx",
+    }
+
+    reauth = Tempest::CLI.build_reauth(env, StringIO.new, StringIO.new, factory)
+
+    assert_raises(Tempest::AuthenticationError) { reauth.call }
+  end
+
   def test_feed_mode_defaults_to_home
     assert_equal :home, Tempest::CLI.feed_mode(argv: [], env: {})
   end

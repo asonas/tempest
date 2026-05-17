@@ -155,6 +155,33 @@ class TestSession < Minitest::Test
     assert_equal new_refresh, received.refresh_jwt
   end
 
+  def test_replace_with_copies_credentials_and_fires_on_change
+    session = Tempest::Session.new(
+      access_jwt: fake_jwt(exp: Time.now.to_i - 60),
+      refresh_jwt: fake_jwt(exp: Time.now.to_i - 30),
+      did: "did:plc:abcdef",
+      handle: "asonas.bsky.social",
+      pds_host: "https://bsky.social",
+    )
+
+    received = nil
+    session.on_change = ->(s) { received = s }
+
+    new_session = Tempest::Session.new(
+      access_jwt: fake_jwt(exp: Time.now.to_i + 3600),
+      refresh_jwt: fake_jwt(exp: Time.now.to_i + 86_400),
+      did: "did:plc:abcdef",
+      handle: "asonas.bsky.social",
+      pds_host: "https://bsky.social",
+    )
+
+    session.replace_with!(new_session)
+
+    assert_equal new_session.access_jwt, session.access_jwt
+    assert_equal new_session.refresh_jwt, session.refresh_jwt
+    assert_same session, received
+  end
+
   def test_refresh_skips_when_if_unchanged_from_no_longer_matches
     new_access = fake_jwt(exp: Time.now.to_i + 3600)
     session = Tempest::Session.new(

@@ -38,6 +38,12 @@ class TestREPLDispatcher < Minitest::Test
     assert_equal :quit, cmd.name
   end
 
+  def test_colon_relogin_returns_relogin_command
+    cmd = @dispatcher.dispatch(":relogin")
+    assert_equal :relogin, cmd.name
+    assert_empty cmd.args
+  end
+
   def test_unknown_colon_command_returns_unknown
     cmd = @dispatcher.dispatch(":nonexistent")
     assert_equal :unknown, cmd.name

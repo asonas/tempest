@@ -55,6 +55,21 @@ module Tempest
       Time.now.to_i + EXPIRY_LEEWAY_SECONDS >= exp
     end
 
+    # Adopts another Session's credentials in place. Used by :relogin so the
+    # XRPCClient that already holds a reference to this Session keeps working
+    # without having to be reconstructed.
+    def replace_with!(other)
+      @refresh_mutex.synchronize do
+        @access_jwt = other.access_jwt
+        @refresh_jwt = other.refresh_jwt
+        @did = other.did
+        @handle = other.handle
+        @pds_host = other.pds_host
+      end
+      @on_change&.call(self)
+      self
+    end
+
     # Refreshes the session using the current refresh_jwt.
     #
     # When `if_unchanged_from:` is supplied, the refresh is skipped if the

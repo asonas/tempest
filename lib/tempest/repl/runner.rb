@@ -18,6 +18,7 @@ module Tempest
           :timeline       Fetch and print the home timeline
           :stream on|off  Toggle the Jetstream live feed
           :open $LX       Open the URL with id $LX in the browser
+          :relogin        Re-authenticate when the cached session is dead
           :help           Show this help
           :quit           Exit tempest (or Ctrl-D)
 
@@ -28,10 +29,12 @@ module Tempest
 
       DEFAULT_OPENER = ->(url) { system("open", url) }
 
+      RELOGIN_HINT = "type :relogin to re-authenticate".freeze
+
       def initialize(session:, client:, input:, output:, dispatcher: Dispatcher.new,
                      stream_manager: nil, handle_resolver: nil, stream_output: nil,
                      timeline_store: nil, registry: Registry.new, opener: DEFAULT_OPENER,
-                     avatar_store: nil)
+                     avatar_store: nil, reauth: nil)
         @session = session
         @client = client
         @input = input
@@ -44,6 +47,7 @@ module Tempest
         @registry = registry
         @opener = opener
         @avatar_store = avatar_store
+        @reauth = reauth
         # URIs already printed via bootstrap_timeline or backfill_timeline.
         # Jetstream's cursor-replay can re-emit those same posts on startup
         # (the persisted cursor is older than the getTimeline window), so the
@@ -104,6 +108,8 @@ module Tempest
             handle_reply(command.args[0], command.args[1])
           when :open
             handle_open(command.args.first)
+          when :relogin
+            handle_relogin
           when :unknown
             @output.puts "unknown command: :#{command.args.first}"
           end
@@ -133,8 +139,23 @@ module Tempest
       def handle_post(text)
         response = Post.create(@client, did: @session.did, text: text)
         @output.puts "posted: #{response["uri"]}"
+      rescue Tempest::AuthenticationError => e
+        @output.puts "error: #{e.message} (#{RELOGIN_HINT})"
       rescue Tempest::Error => e
         @output.puts "error: #{e.message}"
+      end
+
+      def handle_relogin
+        if @reauth.nil?
+          @output.puts "relogin is not available in this session"
+          return
+        end
+
+        new_session = @reauth.call
+        @session.replace_with!(new_session)
+        @output.puts "signed in as @#{@session.handle}"
+      rescue Tempest::Error => e
+        @output.puts "relogin failed: #{e.message}"
       end
 
       def handle_reply(var, body)
@@ -155,6 +176,8 @@ module Tempest
           reply: { uri: reply_uri_for(target), cid: target.cid },
         )
         @output.puts "posted: #{response["uri"]}"
+      rescue Tempest::AuthenticationError => e
+        @output.puts "error: #{e.message} (#{RELOGIN_HINT})"
       rescue Tempest::Error => e
         @output.puts "error: #{e.message}"
       end

@@ -5,11 +5,19 @@ require "tempest/repl/runner"
 
 class TestREPLRunner < Minitest::Test
   class FakeSession
-    attr_reader :did, :handle
+    attr_reader :did, :handle, :replace_calls
 
     def initialize
       @did = "did:plc:abc"
       @handle = "asonas.bsky.social"
+      @replace_calls = []
+    end
+
+    def replace_with!(other)
+      @replace_calls << other
+      @did = other.did
+      @handle = other.handle
+      self
     end
   end
 
@@ -850,6 +858,69 @@ class TestREPLRunner < Minitest::Test
       }
     end
     def post(*) ; {} ; end
+  end
+
+  def test_relogin_command_replaces_session_via_reauth_proc
+    new_session = FakeSession.new
+    reauth = -> { new_session }
+
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: StubReader.new([":relogin", ":quit"]),
+      output: @output,
+      reauth: reauth,
+    )
+    runner.run
+
+    assert_equal [new_session], @session.replace_calls
+    assert_match(/signed in/i, @output.string)
+  end
+
+  def test_relogin_command_prints_error_when_reauth_fails
+    reauth = -> { raise Tempest::AuthenticationError.new("nope", code: "AuthenticationRequired") }
+
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: StubReader.new([":relogin", ":quit"]),
+      output: @output,
+      reauth: reauth,
+    )
+    runner.run
+
+    assert_empty @session.replace_calls
+    assert_match(/relogin failed.*nope/i, @output.string)
+  end
+
+  def test_relogin_command_without_reauth_proc_explains_unavailability
+    out = run_with([":relogin", ":quit"])
+    assert_match(/relogin is not available/i, out)
+  end
+
+  class AuthExpiringClient
+    def get(*) ; raise "unused" ; end
+
+    def post(*)
+      raise Tempest::AuthenticationError.new(
+        "refreshSession failed (400): Token has been revoked",
+        code: "ExpiredToken",
+      )
+    end
+  end
+
+  def test_post_authentication_error_hints_to_relogin
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: AuthExpiringClient.new,
+      input: StubReader.new(["hi", ":quit"]),
+      output: @output,
+    )
+    runner.run
+
+    out = @output.string
+    assert_match(/error:.*revoked/i, out)
+    assert_match(/:relogin/, out)
   end
 
   def test_open_with_facet_url_passes_real_uri_not_truncated
