@@ -105,4 +105,45 @@ class TestREPLScreen < Minitest::Test
       assert_equal 1, tokens.length, "segment carried #{tokens.inspect}, expected exactly one"
     end
   end
+
+  def test_puts_wraps_line_wider_than_cols_into_multiple_chunks
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 20)
+    screen.enable
+    io.truncate(0); io.rewind
+
+    # 30 ascii chars, cols=20 -> two chunks
+    long = "0123456789ABCDEFGHIJKLMNOPQRST"
+    screen.puts long
+
+    output = io.string
+    # Both chunks must land inside the scrolling region.
+    assert_includes output, "0123456789ABCDEFGHIJ"
+    assert_includes output, "KLMNOPQRST"
+    # Each chunk should be preceded by a move-to-last-row and a clear-line, so
+    # the terminal scrolls the region instead of spilling onto the prompt row.
+    move_clear_pairs = output.scan(/\e\[23;1H\r\e\[2K/).length
+    assert_operator move_clear_pairs, :>=, 2
+  end
+
+  def test_puts_does_not_wrap_when_line_fits_in_cols
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 80)
+    screen.enable
+    io.truncate(0); io.rewind
+
+    screen.puts "hello"
+    assert_equal 1, io.string.scan(/\e\[23;1H/).length
+  end
+
+  def test_puts_wraps_cjk_lines_using_display_width_not_char_count
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 10)
+    screen.enable
+    io.truncate(0); io.rewind
+
+    # Each CJK char is width 2; 8 chars = width 16 > cols 10, so it must wrap.
+    screen.puts "日本語テキスト!"
+    assert_operator io.string.scan(/\e\[23;1H/).length, :>=, 2
+  end
 end

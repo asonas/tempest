@@ -1,3 +1,4 @@
+require "reline"
 require_relative "../../tempest"
 
 module Tempest
@@ -13,9 +14,10 @@ module Tempest
     #   CSI row;col H     move cursor
     #   ESC 7 / ESC 8     save/restore cursor (DECSC/DECRC)
     class Screen
-      def initialize(io:, rows: nil)
+      def initialize(io:, rows: nil, cols: nil)
         @io = io
         @rows = rows
+        @cols = cols
         @enabled = false
         @mutex = Mutex.new
       end
@@ -26,6 +28,7 @@ module Tempest
         return unless rows && rows >= 4
 
         @rows = rows
+        @cols ||= detect_cols
         @io.print "\e[1;#{rows - 1}r"   # scrolling region: rows 1..rows-1
         @io.print "\e[#{rows};1H"        # park cursor on the final row (prompt)
         @io.flush if @io.respond_to?(:flush)
@@ -98,14 +101,39 @@ module Tempest
         nil
       end
 
+      def detect_cols
+        return nil unless defined?(IO) && IO.respond_to?(:console)
+        console = IO.console
+        return nil unless console
+        _rows, cols = console.winsize
+        cols
+      rescue StandardError
+        nil
+      end
+
+      # The terminal would otherwise wrap a line that overflows `@cols` past
+      # the bottom of the scrolling region and into the prompt row. Split the
+      # line into width-bounded chunks so each one fits and scrolls the region
+      # cleanly.
       def insert_above_prompt(line)
+        chunks = wrap_to_cols(line)
         bottom_of_region = @rows - 1
         @io.print "\e7"                       # save cursor
-        @io.print "\e[#{bottom_of_region};1H" # move to last row of scrolling region
-        @io.print "\r\e[2K"                   # clear that row first
-        @io.print "#{line}\n"                 # write line; \n scrolls region up by 1
+        chunks.each do |chunk|
+          @io.print "\e[#{bottom_of_region};1H" # move to last row of scrolling region
+          @io.print "\r\e[2K"                   # clear that row first
+          @io.print "#{chunk}\n"                # write chunk; \n scrolls region up by 1
+        end
         @io.print "\e8"                       # restore cursor
         @io.flush if @io.respond_to?(:flush)
+      end
+
+      def wrap_to_cols(line)
+        return [line] unless @cols && @cols.positive?
+        return [line] if Reline::Unicode.calculate_width(line, true) <= @cols
+
+        chunks, _ = Reline::Unicode.split_by_width(line, @cols)
+        chunks.compact.reject(&:empty?)
       end
 
       def rerender_prompt
