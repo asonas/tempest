@@ -20,6 +20,7 @@ module Tempest
         @cols = cols
         @enabled = false
         @mutex = Mutex.new
+        @pending_resize = nil
       end
 
       def enable
@@ -33,10 +34,12 @@ module Tempest
         @io.print "\e[#{rows};1H"        # park cursor on the final row (prompt)
         @io.flush if @io.respond_to?(:flush)
         @enabled = true
+        install_resize_trap
       end
 
       def disable
         return unless @enabled
+        uninstall_resize_trap
         @io.print "\e_Ga=d,q=2\e\\"
         @io.print "\e[r"
         @io.flush if @io.respond_to?(:flush)
@@ -47,8 +50,18 @@ module Tempest
         @enabled
       end
 
+      # SIGWINCH hook. Trap handlers in Ruby are restricted (can't reliably
+      # acquire mutexes or drive Reline), so we only stash the new dimensions
+      # here and apply them on the next mutex-protected write. If rows/cols
+      # are omitted (the production path), they're read from IO.console at
+      # apply time so coalesced WINCHes still pick up the latest size.
+      def notify_resize(rows: nil, cols: nil)
+        @pending_resize = { rows: rows, cols: cols }
+      end
+
       def puts(*lines)
         @mutex.synchronize do
+          apply_pending_resize
           if @enabled
             flat = lines.empty? ? [""] : lines.flat_map { |l| l.to_s.split("\n") }
             flat.each { |line| insert_above_prompt(line) }
@@ -91,6 +104,50 @@ module Tempest
       end
 
       private
+
+      # Caller must hold @mutex. Re-issues DECSTBM and re-parks the cursor on
+      # the new prompt row when winsize actually changed; cheap no-op when it
+      # didn't (some terminals send spurious WINCHes on focus changes).
+      def apply_pending_resize
+        pending = @pending_resize
+        return unless pending
+        @pending_resize = nil
+
+        new_rows = pending[:rows] || detect_rows
+        new_cols = pending[:cols] || detect_cols
+        return unless new_rows && new_rows >= 4
+        return if new_rows == @rows && new_cols == @cols
+
+        @rows = new_rows
+        @cols = new_cols
+        return unless @enabled
+
+        @io.print "\e[1;#{@rows - 1}r"
+        @io.print "\e[#{@rows};1H"
+        @io.flush if @io.respond_to?(:flush)
+      end
+
+      # Install a SIGWINCH trap that only flips a flag. Ruby's trap context
+      # forbids most blocking work (mutexes, IO that might re-enter Reline),
+      # so the actual DECSTBM reissue happens later when puts/print pick up
+      # the pending resize. The previous handler is saved so disable can
+      # restore it cleanly.
+      def install_resize_trap
+        return unless Signal.list.key?("WINCH")
+        screen = self
+        @previous_winch_trap = Signal.trap("WINCH") { screen.notify_resize }
+      rescue ArgumentError
+        # Some embedded Rubies refuse to trap WINCH; nothing to do.
+        @previous_winch_trap = nil
+      end
+
+      def uninstall_resize_trap
+        return unless Signal.list.key?("WINCH")
+        Signal.trap("WINCH", @previous_winch_trap || "DEFAULT")
+        @previous_winch_trap = nil
+      rescue ArgumentError
+        @previous_winch_trap = nil
+      end
 
       def detect_rows
         return nil unless defined?(IO) && IO.respond_to?(:console)

@@ -172,4 +172,102 @@ class TestREPLScreen < Minitest::Test
     screen.puts "日本語テキスト!"
     assert_operator io.string.scan(/\e\[23;1H/).length, :>=, 2
   end
+
+  # When the terminal is resized (SIGWINCH), the scrolling region we set at
+  # enable-time becomes stale. Until we reissue DECSTBM with the new bottom row,
+  # the prompt either wraps below the region or text spills onto the prompt
+  # row, producing the duplicated `tempest> ` rows the user sees.
+  def test_notify_resize_reissues_scrolling_region_with_new_rows_on_next_puts
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 80)
+    screen.enable
+    io.truncate(0); io.rewind
+
+    screen.notify_resize(rows: 30, cols: 80)
+    screen.puts "after-resize"
+
+    output = io.string
+    # New scrolling region: rows 1..29, prompt parked on row 30.
+    assert_includes output, "\e[1;29r"
+    assert_includes output, "\e[30;1H"
+    # The inserted line targets the new bottom-of-region row (29), not 23.
+    assert_includes output, "\e[29;1H"
+    refute_includes output, "\e[23;1H"
+  end
+
+  # cols matters too: stale @cols makes wrap_to_cols split wide lines into
+  # too-many short chunks, causing two events' bytes to collide on the same
+  # row in real terminals.
+  def test_notify_resize_updates_cols_for_wrapping
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 20)
+    screen.enable
+    io.truncate(0); io.rewind
+
+    # cols=40 now fits the whole line; should land in a single chunk.
+    screen.notify_resize(rows: 24, cols: 40)
+    long = "0123456789ABCDEFGHIJKLMNOPQRSTUV" # 32 chars
+    screen.puts long
+
+    output = io.string
+    assert_equal 1, output.scan(/\e\[23;1H/).length,
+      "expected exactly one move-to-bottom because the line fits in 40 cols"
+    assert_includes output, long
+  end
+
+  # If WINCH fires but the size didn't actually change (some terminals send
+  # spurious notifications), don't reissue — saves a flicker and a redraw.
+  def test_notify_resize_is_a_noop_when_dimensions_unchanged
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 80)
+    screen.enable
+    io.truncate(0); io.rewind
+
+    screen.notify_resize(rows: 24, cols: 80)
+    screen.puts "hi"
+
+    refute_includes io.string, "\e[1;23r",
+      "must not reissue DECSTBM when nothing changed"
+  end
+
+  # A resize notification arriving before enable (CLI hasn't wired the prompt
+  # yet) shouldn't crash and shouldn't emit anything — it should just update
+  # the cached dims so enable picks them up.
+  def test_notify_resize_before_enable_does_not_emit_sequences
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 80)
+    screen.notify_resize(rows: 30, cols: 100)
+
+    assert_empty io.string
+  end
+
+  # enable() must install a SIGWINCH trap so terminal resizes drive
+  # notify_resize without callers having to wire it. disable() restores the
+  # previously-installed handler so we don't leak trap state across runs
+  # (tests in the same process, daemonized child processes, etc.).
+  def test_enable_installs_winch_trap_and_disable_restores_previous_handler
+    skip "WINCH not supported on this platform" unless Signal.list.key?("WINCH")
+
+    sentinel = ->(_signo) { :sentinel }
+    previous = Signal.trap("WINCH", sentinel)
+
+    begin
+      io = FakeTTY.new
+      screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 80)
+      screen.enable
+
+      installed = Signal.trap("WINCH", sentinel) # read current and reset to sentinel
+      refute_equal sentinel, installed,
+        "enable should install its own WINCH handler"
+      Signal.trap("WINCH", installed) # put screen's handler back
+
+      screen.disable
+
+      after_disable = Signal.trap("WINCH", "DEFAULT")
+      assert_equal sentinel, after_disable,
+        "disable must restore the pre-enable WINCH handler"
+    ensure
+      Signal.trap("WINCH", previous || "DEFAULT")
+    end
+  end
 end
