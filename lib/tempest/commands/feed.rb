@@ -25,17 +25,37 @@ module Tempest
         opts, positional = parse(rest, stderr: stderr)
         return 64 if opts.nil?
 
+        nsid, base_query = endpoint_for(subcommand, session: session, positional: positional, client: client)
+        if nsid.nil?
+          stderr.puts "error: feed author requires a handle or DID"
+          return 64
+        end
         if opts[:limit] > MAX_LIMIT
           stderr.puts "error: --limit must be <= #{MAX_LIMIT}"
           return 64
         end
 
-        nsid, query = endpoint_for(subcommand, session: session, positional: positional, client: client)
-        return 64 if nsid.nil?
-        query["limit"] = opts[:limit]
-        response = client.get(nsid, query: query)
+        items = []
+        cursor = nil
+        max_pages = 5
+        pages = 0
+        loop do
+          query = base_query.merge("limit" => opts[:limit])
+          query["cursor"] = cursor if cursor
+          response = client.get(nsid, query: query)
+          page_items = Array(response["feed"]).map { |entry| entry["post"] }
+          items.concat(page_items)
+          pages += 1
+          cursor = response["cursor"]
+          break if cursor.nil? || cursor.empty?
+          break if pages >= max_pages
+          break unless opts[:since]
+          oldest = page_items.last && page_items.last.dig("record", "createdAt")
+          break if oldest.nil?
+          break if Time.iso8601(oldest) < opts[:since]
+        end
+        stderr.puts "warning: pagination cap of #{max_pages} pages reached; result truncated" if pages >= max_pages && !cursor.nil? && !cursor.empty?
 
-        items = Array(response["feed"]).map { |entry| entry["post"] }
         items = filter_by_date(items, opts)
         emit(items, format: opts[:format], stdout: stdout)
         0

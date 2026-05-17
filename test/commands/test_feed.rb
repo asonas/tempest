@@ -118,6 +118,73 @@ class TestCommandsFeed < Minitest::Test
     assert_match(/@alice.bsky.social: hi/, out.string)
   end
 
+  def test_author_resolves_handle_via_get_profile_then_calls_getAuthorFeed
+    client = FakeClient.new(
+      "app.bsky.actor.getProfile" => { "did" => "did:plc:bob", "handle" => "bob.bsky.social" },
+      "app.bsky.feed.getAuthorFeed" => author_feed_response(items: [
+        base_post(created_at: "2026-05-17T01:00:00Z"),
+      ]),
+    )
+    out = StringIO.new
+    status = Tempest::Commands::Feed.call(
+      argv: ["author", "bob.bsky.social", "--format=json"],
+      session: fake_session, client: client,
+      stdout: out, stderr: StringIO.new,
+    )
+    assert_equal 0, status
+    nsids = client.calls.map(&:first)
+    assert_equal ["app.bsky.actor.getProfile", "app.bsky.feed.getAuthorFeed"], nsids
+    assert_equal "did:plc:bob", client.calls[1][1]["actor"]
+  end
+
+  def test_pagination_follows_cursor_when_since_not_yet_crossed
+    page1_items = (1..50).map { |i| base_post(created_at: "2026-05-17T#{format('%02d', i % 24)}:00:00Z", uri: "at://a#{i}", cid: "c#{i}") }
+    page2_items = [base_post(created_at: "2026-05-15T01:00:00Z", uri: "at://b1", cid: "cb1")]
+    client = Class.new do
+      def initialize(p1, p2); @p1 = p1; @p2 = p2; @calls = []; end
+      attr_reader :calls
+      def get(nsid, query: nil)
+        @calls << [nsid, query]
+        if query && query["cursor"]
+          @p2
+        else
+          @p1
+        end
+      end
+    end.new(
+      { "feed" => page1_items.map { |i| { "post" => i } }, "cursor" => "next-cursor" },
+      { "feed" => page2_items.map { |i| { "post" => i } }, "cursor" => nil },
+    )
+
+    out = StringIO.new
+    Tempest::Commands::Feed.call(
+      argv: ["me", "--format=json", "--since=2026-05-14T00:00:00Z", "--limit=50"],
+      session: fake_session, client: client,
+      stdout: out, stderr: StringIO.new,
+    )
+    assert_equal 2, client.calls.length
+    assert_equal "next-cursor", client.calls[1][1]["cursor"]
+  end
+
+  def test_pagination_hard_caps_at_5_pages_and_warns
+    page = { "feed" => [{ "post" => base_post(created_at: "2026-05-17T01:00:00Z") }], "cursor" => "more" }
+    client = Class.new do
+      def initialize(p); @p = p; @calls = []; end
+      attr_reader :calls
+      def get(_, query: nil); @calls << query; @p; end
+    end.new(page)
+
+    err = StringIO.new
+    status = Tempest::Commands::Feed.call(
+      argv: ["me", "--format=json", "--since=2020-01-01T00:00:00Z"],
+      session: fake_session, client: client,
+      stdout: StringIO.new, stderr: err,
+    )
+    assert_equal 0, status
+    assert_equal 5, client.calls.length
+    assert_match(/truncated/, err.string)
+  end
+
   def test_api_error_propagates_to_exit_code_4_via_dispatcher
     Dir.mktmpdir do |dir|
       path = File.join(dir, "session.json")
