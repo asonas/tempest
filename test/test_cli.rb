@@ -340,6 +340,50 @@ class TestCLI < Minitest::Test
     refute opener.call("https://example.com")
   end
 
+  def test_build_debug_logger_returns_null_logger_without_env
+    logger = Tempest::CLI.build_debug_logger({})
+    # No file path → no observable output, but the method must return a logger.
+    refute_nil logger
+    logger.info("tag") { "ignored" }
+  end
+
+  def test_build_debug_logger_writes_to_path_when_env_set
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "tempest-debug.log")
+      logger = Tempest::CLI.build_debug_logger({ "TEMPEST_DEBUG_LOG" => path })
+      logger.info("stream") { "CLI wired the logger" }
+      logger.close if logger.respond_to?(:close)
+
+      assert File.exist?(path)
+      assert_match(/CLI wired the logger/, File.read(path))
+    end
+  end
+
+  def test_watchdog_options_parses_env_overrides
+    opts = Tempest::CLI.watchdog_options({
+      "TEMPEST_WATCHDOG_THRESHOLD" => "120",
+      "TEMPEST_WATCHDOG_INTERVAL" => "45",
+    })
+
+    assert_equal 120, opts[:threshold_seconds]
+    assert_equal 45, opts[:interval_seconds]
+  end
+
+  def test_watchdog_options_uses_defaults_without_env
+    opts = Tempest::CLI.watchdog_options({})
+    assert_equal Tempest::Jetstream::Watchdog::DEFAULT_THRESHOLD_SECONDS, opts[:threshold_seconds]
+    assert_equal Tempest::Jetstream::Watchdog::DEFAULT_INTERVAL_SECONDS, opts[:interval_seconds]
+  end
+
+  def test_watchdog_options_raises_on_garbage_env
+    assert_raises(ArgumentError) do
+      Tempest::CLI.watchdog_options({ "TEMPEST_WATCHDOG_THRESHOLD" => "not-a-number" })
+    end
+    assert_raises(ArgumentError) do
+      Tempest::CLI.watchdog_options({ "TEMPEST_WATCHDOG_INTERVAL" => "abc" })
+    end
+  end
+
   def test_sign_in_persists_tokens_when_session_refreshes_later
     Dir.mktmpdir do |dir|
       store = Tempest::SessionStore.new(path: File.join(dir, "session.json"))

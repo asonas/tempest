@@ -1,5 +1,6 @@
 require_relative "../tempest"
 require_relative "config"
+require_relative "debug_log"
 require_relative "session"
 require_relative "session_store"
 require_relative "cursor_store"
@@ -10,6 +11,7 @@ require_relative "follows"
 require_relative "jetstream/client"
 require_relative "jetstream/stream_manager"
 require_relative "jetstream/subscription"
+require_relative "jetstream/watchdog"
 require_relative "repl/runner"
 require_relative "repl/formatter"
 require_relative "repl/async_output"
@@ -33,6 +35,8 @@ module Tempest
       end
 
       Tempest::REPL::Formatter.color = stdout.respond_to?(:tty?) && stdout.tty? && env["NO_COLOR"].to_s.empty?
+
+      debug_logger = build_debug_logger(env)
 
       store ||= Tempest::SessionStore.new(path: Tempest::SessionStore.default_path(env))
       session = sign_in(env, stdout, stdin, session_factory, store: store)
@@ -60,6 +64,12 @@ module Tempest
         client: jetstream_client,
         cursor_store: cursor_store(env),
         filter: plan.filter,
+        logger: debug_logger,
+      )
+      watchdog = Tempest::Jetstream::Watchdog.new(
+        stream_manager: stream_manager,
+        logger: debug_logger,
+        **watchdog_options(env),
       )
 
       stdout.puts "tempest #{Tempest::VERSION} — signed in as @#{session.handle}"
@@ -87,9 +97,11 @@ module Tempest
           runner.auto_start_stream
         end
 
+        watchdog.start
         runner.run
         0
       ensure
+        watchdog.stop
         screen.disable
       end
     rescue Tempest::Config::MissingValue => e
@@ -154,6 +166,28 @@ module Tempest
 
     def cursor_store(env)
       Tempest::CursorStore.new(path: Tempest::CursorStore.default_path(env))
+    end
+
+    # Returns a Logger configured from TEMPEST_DEBUG_LOG (path) and
+    # TEMPEST_DEBUG_LOG_LEVEL. When TEMPEST_DEBUG_LOG is unset, the returned
+    # logger writes to IO::NULL at FATAL level so call sites can log
+    # unconditionally without producing files or output.
+    def build_debug_logger(env)
+      Tempest::DebugLog.from_env(env)
+    end
+
+    # Parses TEMPEST_WATCHDOG_THRESHOLD / TEMPEST_WATCHDOG_INTERVAL into the
+    # keyword-hash shape Watchdog expects. Raises ArgumentError on garbage so
+    # a typo in env config fails loudly rather than silently degrading.
+    def watchdog_options(env)
+      threshold = env["TEMPEST_WATCHDOG_THRESHOLD"]
+      interval = env["TEMPEST_WATCHDOG_INTERVAL"]
+      {
+        threshold_seconds: threshold ? Integer(threshold) :
+          Tempest::Jetstream::Watchdog::DEFAULT_THRESHOLD_SECONDS,
+        interval_seconds: interval ? Integer(interval) :
+          Tempest::Jetstream::Watchdog::DEFAULT_INTERVAL_SECONDS,
+      }
     end
 
     def timeline_store(env)
@@ -241,6 +275,18 @@ module Tempest
                                  $XDG_CONFIG_HOME/tempest/cursor.json). Holds the last-seen
                                  time_us so a restart can replay missed events.
           TEMPEST_FEED           "home" (default) or "self"; equivalent to --feed.
+          TEMPEST_DEBUG_LOG      Path to a debug log file. When set, the live-stream
+                                 component writes timestamped state transitions to this
+                                 file (rotated daily). Unset by default — no file is
+                                 created and no output is produced.
+          TEMPEST_DEBUG_LOG_LEVEL
+                                 DEBUG | INFO (default) | WARN. Overrides the log
+                                 verbosity when TEMPEST_DEBUG_LOG is enabled.
+          TEMPEST_WATCHDOG_THRESHOLD
+                                 Seconds without a Jetstream event before the watchdog
+                                 forces a reconnect (default: 90).
+          TEMPEST_WATCHDOG_INTERVAL
+                                 Seconds between watchdog checks (default: 30).
       HELP
     end
 

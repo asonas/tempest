@@ -1,4 +1,5 @@
 require_relative "../../tempest"
+require_relative "../debug_log"
 require_relative "client"
 
 module Tempest
@@ -24,7 +25,7 @@ module Tempest
       def initialize(client:, backoff: DEFAULT_BACKOFF, sleeper: ->(s) { sleep(s) },
                      clock: -> { Time.now }, cursor_store: nil,
                      cursor_save_interval: DEFAULT_CURSOR_SAVE_INTERVAL,
-                     filter: nil)
+                     filter: nil, logger: nil)
         @client = client
         @backoff = backoff
         @sleeper = sleeper
@@ -32,10 +33,12 @@ module Tempest
         @cursor_store = cursor_store
         @cursor_save_interval = cursor_save_interval
         @filter = filter
+        @logger = logger || Tempest::DebugLog.build_null_logger
         @thread = nil
         @mutex = Mutex.new
         @stopping = false
         @cursor_state = { live: nil, saved: nil }
+        @last_event_at = nil
       end
 
       def start(&on_event)
@@ -47,6 +50,10 @@ module Tempest
       end
 
       def stop
+        @logger.info("stream") do
+          live = @mutex.synchronize { @cursor_state[:live] }
+          "stopping final_cursor=#{live.inspect}"
+        end
         @mutex.synchronize { @stopping = true }
         thread = @mutex.synchronize do
           t = @thread
@@ -62,17 +69,46 @@ module Tempest
         @mutex.synchronize { !!@thread&.alive? }
       end
 
+      # Time of the last event yielded by the underlying client, regardless of
+      # whether the filter accepted it. Watchdog reads this to detect a stalled
+      # socket (kernel still thinks the TCP connection is alive but no bytes
+      # are arriving).
+      def last_event_at
+        @mutex.synchronize { @last_event_at }
+      end
+
+      # Break a stalled each_event so the reconnect loop can run. Used by the
+      # Watchdog when the kernel hasn't surfaced the disconnect (e.g., after
+      # macOS sleep/wake). Safe to call from another thread or when no worker
+      # is running.
+      def force_reconnect
+        thread = @mutex.synchronize { @thread }
+        return unless thread&.alive?
+        @logger.warn("stream") { "force_reconnect requested" }
+        begin
+          thread.raise(Stalled.new("forced reconnect"))
+        rescue ThreadError
+          # Thread already exited between alive? and raise — nothing to do.
+        end
+      end
+
       private
 
       def run(on_event)
         Thread.current.report_on_exception = false
         cursor, startup_gap_since = load_initial_cursor
         if startup_gap_since
+          @logger.warn("stream") { "startup_stale stale_since=#{startup_gap_since.iso8601}" }
           on_event.call(StreamStatus.new(state: :gapped, since: startup_gap_since))
         end
         last_saved_cursor = cursor
         last_save_at = nil
         attempt = 0
+
+        @logger.info("stream") do
+          age = cursor ? cursor_age_seconds(cursor) : nil
+          "worker start cursor=#{cursor.inspect} cursor_age_seconds=#{age.inspect}"
+        end
 
         until stopping?
           # Detect a long offline gap from the cursor's age rather than from
@@ -86,26 +122,33 @@ module Tempest
           if attempt > 0 && cursor
             cursor_age = @clock.call.to_f - (cursor / 1_000_000.0)
             if cursor_age > CURSOR_WINDOW_SECONDS
-              on_event.call(
-                StreamStatus.new(state: :gapped, since: Time.at(cursor / 1_000_000.0)),
-              )
+              since = Time.at(cursor / 1_000_000.0)
+              @logger.warn("stream") { "gapped cursor_age_seconds=#{cursor_age.round(1)} since=#{since.iso8601}" }
+              on_event.call(StreamStatus.new(state: :gapped, since: since))
               cursor = nil
             end
           end
 
-          on_event.call(StreamStatus.new(state: :reconnecting)) if attempt > 0
+          if attempt > 0
+            delay = @backoff[[attempt - 1, @backoff.length - 1].min]
+            @logger.info("stream") { "reconnecting attempt=#{attempt} cursor=#{cursor.inspect} backoff_just_slept=#{delay}" }
+            on_event.call(StreamStatus.new(state: :reconnecting))
+          end
 
           error = nil
           saw_event = false
+          @logger.info("stream") { "subscribe cursor=#{cursor.inspect}" }
           begin
             @client.each_event(cursor: cursor) do |event|
+              now = @clock.call
+              @mutex.synchronize { @last_event_at = now }
               if event.respond_to?(:time_us) && event.time_us
                 cursor = event.time_us
                 @mutex.synchronize { @cursor_state[:live] = cursor }
                 if @cursor_store && cursor != last_saved_cursor
-                  now = @clock.call
                   if last_save_at.nil? || (now - last_save_at) >= @cursor_save_interval
                     @cursor_store.save(time_us: cursor, at: now)
+                    @logger.debug("stream") { "cursor save time_us=#{cursor}" }
                     last_saved_cursor = cursor
                     last_save_at = now
                     @mutex.synchronize { @cursor_state[:saved] = cursor }
@@ -120,8 +163,13 @@ module Tempest
               saw_event = true
               on_event.call(event)
             end
+          rescue Stalled => e
+            error = e
+            @logger.warn("stream") { "stalled — forced reconnect cursor=#{cursor.inspect}" }
+            on_event.call(StreamError.new(e))
           rescue => e
             error = e
+            @logger.warn("stream") { "disconnect error=#{e.class}: #{e.message}" }
             on_event.call(StreamError.new(e))
           end
 
@@ -132,6 +180,7 @@ module Tempest
           if @cursor_store && cursor && cursor != last_saved_cursor
             now = @clock.call
             @cursor_store.save(time_us: cursor, at: now)
+            @logger.debug("stream") { "cursor save (disconnect) time_us=#{cursor}" }
             last_saved_cursor = cursor
             last_save_at = now
             @mutex.synchronize { @cursor_state[:saved] = cursor }
@@ -149,6 +198,15 @@ module Tempest
           @sleeper.call(delay)
           attempt += 1
         end
+
+        @logger.info("stream") { "worker exit final_cursor=#{cursor.inspect}" }
+      end
+
+      def cursor_age_seconds(cursor)
+        return nil unless cursor
+        (@clock.call - Time.at(cursor / 1_000_000.0)).round(1)
+      rescue StandardError
+        nil
       end
 
       def stopping?
@@ -180,6 +238,11 @@ module Tempest
         @mutex.synchronize { @cursor_state[:saved] = live }
       end
     end
+
+    # Raised inside the worker thread by StreamManager#force_reconnect to
+    # break a stalled each_event. The run loop catches it and treats it as a
+    # disconnect, preserving the existing reconnect-with-cursor flow.
+    class Stalled < StandardError; end
 
     StreamError = Struct.new(:cause)
 

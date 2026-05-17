@@ -1,4 +1,5 @@
 require_relative "test_helper"
+require "logger"
 require "tempest/jetstream/stream_manager"
 require "tempest/jetstream/client"
 
@@ -709,6 +710,149 @@ class TestJetstreamStreamManager < Minitest::Test
     manager.stop
 
     assert_equal [nil, 200], client.cursors_seen
+  end
+
+  def test_accepts_logger_keyword_and_defaults_to_null_logger
+    client = FakeClient.new(block_on_iteration: true)
+    manager = Tempest::Jetstream::StreamManager.new(client: client)
+    manager.start { |_| }
+    manager.stop
+
+    # Should also accept an explicit logger without raising.
+    logger = Logger.new(IO::NULL)
+    manager2 = Tempest::Jetstream::StreamManager.new(client: client, logger: logger)
+    manager2.start { |_| }
+    manager2.stop
+  end
+
+  def test_last_event_at_is_nil_before_any_event
+    client = FakeClient.new(block_on_iteration: true)
+    manager = Tempest::Jetstream::StreamManager.new(client: client)
+    assert_nil manager.last_event_at
+    manager.start { |_| }
+    manager.stop
+  end
+
+  def test_last_event_at_updated_to_clock_time_when_event_yielded
+    now = Time.utc(2026, 5, 17, 0, 0, 0)
+    seen = Queue.new
+    client = ScriptedClient.new([
+      [make_event(time_us: 1)],
+      nil,
+    ])
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: client,
+      backoff: [0],
+      sleeper: ->(_) {},
+      clock: -> { now },
+    )
+
+    manager.start { |e| seen << e if e.is_a?(Tempest::Jetstream::Event) }
+    seen.pop # wait for first event
+
+    assert_equal now, manager.last_event_at
+
+    client.release_all
+    manager.stop
+  end
+
+  def test_last_event_at_updates_for_filtered_events_too
+    # Filter suppresses display but the watchdog should still consider the
+    # stream "alive" — server data is flowing.
+    now = Time.utc(2026, 5, 17, 0, 0, 0)
+    e_skip = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:skip", time_us: 100,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "r1", cid: nil, text: "junk", created_at: "2026-01-01T00:00:00Z",
+    )
+    client = ScriptedClient.new([
+      [e_skip],
+      nil,
+    ])
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: client,
+      backoff: [0],
+      sleeper: ->(_) {},
+      clock: -> { now },
+      filter: ->(_e) { false },
+    )
+
+    manager.start { |_| }
+    100.times do
+      break if manager.last_event_at
+      sleep 0.005
+    end
+
+    assert_equal now, manager.last_event_at
+
+    client.release_all
+    manager.stop
+  end
+
+  def test_force_reconnect_breaks_blocked_each_event_and_triggers_reconnect
+    # Client first call blocks indefinitely simulating a stalled socket; we
+    # then call force_reconnect and expect a SECOND each_event call to happen.
+    gate1 = Queue.new
+    gate2 = Queue.new
+    in_first = Queue.new
+
+    stalled_client = Class.new do
+      attr_reader :calls
+
+      def initialize(in_first:, gate1:, gate2:)
+        @in_first = in_first
+        @gate1 = gate1
+        @gate2 = gate2
+        @calls = 0
+        @mutex = Mutex.new
+      end
+
+      def each_event(cursor: nil)
+        call = @mutex.synchronize { @calls += 1 }
+        if call == 1
+          @in_first << :ready
+          @gate1.pop # simulate stalled recv
+        else
+          @gate2.pop
+        end
+      end
+
+      def release
+        100.times { @gate1 << :go }
+        100.times { @gate2 << :go }
+      end
+    end.new(in_first: in_first, gate1: gate1, gate2: gate2)
+
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: stalled_client,
+      backoff: [0],
+      sleeper: ->(_) {},
+    )
+
+    manager.start { |_| }
+    in_first.pop # wait until we're parked inside each_event #1
+
+    manager.force_reconnect
+
+    # Wait for the second each_event call to start.
+    50.times do
+      break if stalled_client.calls >= 2
+      sleep 0.01
+    end
+
+    assert_equal 2, stalled_client.calls,
+      "force_reconnect should unblock first call and trigger a second each_event"
+
+    stalled_client.release
+    manager.stop
+  end
+
+  def test_force_reconnect_is_safe_when_not_running
+    client = FakeClient.new
+    manager = Tempest::Jetstream::StreamManager.new(client: client)
+
+    # Must not raise even if there is no worker thread.
+    manager.force_reconnect
   end
 
   def test_double_start_is_idempotent

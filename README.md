@@ -87,7 +87,19 @@ Each post in the timeline is prefixed with a short `$XX` id, and URLs found insi
 | `TEMPEST_SESSION_PATH`      | Override the session cache path                                         |
 | `TEMPEST_CURSOR_PATH`       | Override the Jetstream cursor cache path                                |
 | `TEMPEST_TIMELINE_PATH`     | Override the timeline snapshot cache path                               |
+| `TEMPEST_DEBUG_LOG`         | Path to a debug log file (unset by default; see Diagnostics)            |
+| `TEMPEST_DEBUG_LOG_LEVEL`   | `DEBUG`, `INFO` (default), or `WARN`                                    |
+| `TEMPEST_WATCHDOG_THRESHOLD`| Seconds without a Jetstream event before a forced reconnect (default 90) |
+| `TEMPEST_WATCHDOG_INTERVAL` | Seconds between watchdog checks (default 30)                            |
 | `NO_COLOR`                  | Disable ANSI colors when set to any non-empty value                     |
+
+## Diagnostics
+
+Set `TEMPEST_DEBUG_LOG` to a writable path and `tempest` will append timestamped notes about every Jetstream state transition to that file (rotated daily). When the variable is unset no file is created and the runtime behaves exactly as before. Example: `TEMPEST_DEBUG_LOG=~/tempest-debug.log tempest`.
+
+A built-in watchdog runs alongside the Jetstream consumer regardless of logging: if no event arrives within `TEMPEST_WATCHDOG_THRESHOLD` seconds (default 90), it forces the consumer to reconnect. This protects the live feed against stalled sockets that the kernel still believes are alive, the typical failure mode after macOS sleep and wake.
+
+To inspect the log, grep by component tag: `grep '\[stream\]' ~/tempest-debug.log` shows connect, reconnect, gap, and disconnect events, while `grep '\[watchdog\]' ~/tempest-debug.log` shows forced reconnects.
 
 ## Development
 
