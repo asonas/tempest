@@ -141,12 +141,10 @@ module Tempest
           @output.puts "usage: $XX <text>"
           return
         end
-        handle = reply_handle_for(target)
-        text = handle ? "@#{handle} #{body}" : body
         response = Post.create(
           @client,
           did: @session.did,
-          text: text,
+          text: body,
           reply: { uri: reply_uri_for(target), cid: target.cid },
         )
         @output.puts "posted: #{response["uri"]}"
@@ -170,14 +168,6 @@ module Tempest
 
       def reply_uri_for(target)
         target.respond_to?(:uri) && target.uri ? target.uri : target.at_uri
-      end
-
-      def reply_handle_for(target)
-        if target.respond_to?(:handle) && target.handle
-          target.handle
-        elsif @handle_resolver && target.respond_to?(:did)
-          @handle_resolver.resolve(target.did)
-        end
       end
 
       def handle_stream(arg)

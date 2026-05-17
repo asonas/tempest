@@ -596,12 +596,12 @@ class TestREPLRunner < Minitest::Test
     assert_empty @client.post_calls
   end
 
-  def test_reply_happy_path_creates_post_with_handle_prefix_and_reply_target
+  def test_reply_happy_path_posts_body_verbatim_and_sets_reply_target
     out = run_with([":timeline", "$AA hello back", ":quit"])
     assert_equal 1, @client.post_calls.length
     nsid, body = @client.post_calls.first
     assert_equal "com.atproto.repo.createRecord", nsid
-    assert_equal "@alice.bsky.social hello back", body[:record]["text"]
+    assert_equal "hello back", body[:record]["text"]
     assert_equal(
       "at://did:plc:a/app.bsky.feed.post/1",
       body[:record]["reply"]["parent"]["uri"],
