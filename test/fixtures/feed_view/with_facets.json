@@ -1,0 +1,23 @@
+{
+  "uri": "at://did:plc:abc/app.bsky.feed.post/k2",
+  "cid": "bafyfacets",
+  "author": { "did": "did:plc:abc", "handle": "alice.bsky.social", "displayName": "Alice" },
+  "record": {
+    "$type": "app.bsky.feed.post",
+    "text": "see https://example.com please",
+    "createdAt": "2026-05-17T02:00:00.000Z",
+    "langs": ["ja"],
+    "facets": [
+      {
+        "index": { "byteStart": 4, "byteEnd": 23 },
+        "features": [
+          { "$type": "app.bsky.richtext.facet#link", "uri": "https://example.com" }
+        ]
+      }
+    ]
+  },
+  "indexedAt": "2026-05-17T02:00:00.900Z",
+  "likeCount": 3,
+  "repostCount": 1,
+  "replyCount": 0
+}

@@ -1,0 +1,15 @@
+{
+  "uri": "at://did:plc:abc/app.bsky.feed.post/k1",
+  "cid": "bafyminimal",
+  "author": { "did": "did:plc:abc", "handle": "alice.bsky.social", "displayName": "Alice" },
+  "record": {
+    "$type": "app.bsky.feed.post",
+    "text": "hello",
+    "createdAt": "2026-05-17T01:00:00.000Z",
+    "langs": ["ja"]
+  },
+  "indexedAt": "2026-05-17T01:00:01.500Z",
+  "likeCount": 0,
+  "repostCount": 0,
+  "replyCount": 0
+}

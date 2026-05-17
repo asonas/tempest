@@ -1,0 +1,19 @@
+{
+  "uri": "at://did:plc:abc/app.bsky.feed.post/k3",
+  "cid": "bafyreply",
+  "author": { "did": "did:plc:abc", "handle": "alice.bsky.social" },
+  "record": {
+    "$type": "app.bsky.feed.post",
+    "text": "thanks",
+    "createdAt": "2026-05-17T03:00:00.000Z",
+    "langs": ["ja"],
+    "reply": {
+      "root":   { "uri": "at://did:plc:bob/app.bsky.feed.post/root", "cid": "bafyroot" },
+      "parent": { "uri": "at://did:plc:bob/app.bsky.feed.post/par",  "cid": "bafypar" }
+    }
+  },
+  "indexedAt": "2026-05-17T03:00:00.100Z",
+  "likeCount": 0,
+  "repostCount": 0,
+  "replyCount": 0
+}

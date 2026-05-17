@@ -1,0 +1,13 @@
+{
+  "uri": "at://did:plc:abc/app.bsky.feed.post/k4",
+  "cid": "bafyembed",
+  "author": { "did": "did:plc:abc", "handle": "alice.bsky.social" },
+  "record": {
+    "$type": "app.bsky.feed.post",
+    "text": "look",
+    "createdAt": "2026-05-17T04:00:00.000Z",
+    "embed": { "$type": "app.bsky.embed.images" }
+  },
+  "embed": { "$type": "app.bsky.embed.images#view" },
+  "indexedAt": "2026-05-17T04:00:00.000Z"
+}
