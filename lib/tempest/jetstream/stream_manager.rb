@@ -83,6 +83,14 @@ module Tempest
         thread = @mutex.synchronize { @thread }
         return unless thread&.alive?
         @logger.warn("stream", event: "force_reconnect_requested")
+        # Pre-advance last_event_at so the watchdog's next tick sees a fresh
+        # connection and doesn't re-fire while the worker is still recovering.
+        # Without this, a second Stalled can land in the backoff sleep — which
+        # is outside the inner `rescue Stalled` block — and would historically
+        # take down the worker. The outer rescue in `run` now catches that
+        # case too, but suppressing the duplicate force_reconnect is still the
+        # right thing to do.
+        @mutex.synchronize { @last_event_at = @clock.call }
         begin
           thread.raise(Stalled.new("forced reconnect"))
         rescue ThreadError
@@ -111,6 +119,13 @@ module Tempest
         )
 
         until stopping?
+          # The outer `rescue Stalled` below catches Stalled raised by
+          # force_reconnect that lands OUTSIDE the inner each_event block —
+          # e.g. during @sleeper.call(delay), the cursor age check, or the
+          # disconnected/reconnecting status emission. Without this guard, a
+          # second force_reconnect arriving during recovery used to escape
+          # the inner rescue and silently kill the worker thread.
+          begin
           # Detect a long offline gap from the cursor's age rather than from
           # wall-clock disconnect timestamps. When the host machine sleeps,
           # the background thread is suspended and we only learn about the
@@ -229,6 +244,19 @@ module Tempest
           delay = @backoff[[attempt, @backoff.length - 1].min]
           @sleeper.call(delay)
           attempt += 1
+          rescue Stalled => e
+            # Stalled landed outside the inner each_event rescue (typically
+            # in @sleeper.call). Treat it as a transient blip and let the loop
+            # try again instead of letting the worker thread die.
+            @logger.warn(
+              "stream",
+              event: "stalled_outside_each_event",
+              attempt: attempt,
+              cursor: cursor,
+              error_message: e.message,
+            )
+            attempt += 1
+          end
         end
 
         @logger.info("stream", event: "worker_exit", final_cursor: cursor)

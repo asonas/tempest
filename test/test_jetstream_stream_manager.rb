@@ -906,4 +906,135 @@ class TestJetstreamStreamManager < Minitest::Test
     assert_equal 1, client.started
     manager.stop
   end
+
+  # Regression: when the watchdog fires force_reconnect during the worker's
+  # backoff sleep (Stalled raised outside the `rescue Stalled` block that wraps
+  # each_event), the worker thread used to escape uncaught and die silently.
+  # The reconnect loop must absorb that Stalled and keep going.
+  def test_stalled_raised_during_backoff_sleep_does_not_kill_worker
+    in_first = Queue.new
+    gate_first = Queue.new
+    gate_second = Queue.new
+    in_sleep = Queue.new
+
+    client = Class.new do
+      attr_reader :calls
+
+      def initialize(in_first:, gate_first:, gate_second:)
+        @in_first = in_first
+        @gate_first = gate_first
+        @gate_second = gate_second
+        @calls = 0
+        @mutex = Mutex.new
+      end
+
+      def each_event(cursor: nil)
+        call = @mutex.synchronize { @calls += 1 }
+        if call == 1
+          @in_first << :ready
+          @gate_first.pop
+          # Return normally to send the worker into backoff sleep.
+        else
+          @gate_second.pop
+        end
+      end
+
+      def release
+        100.times { @gate_first << :go }
+        100.times { @gate_second << :go }
+      end
+    end.new(in_first: in_first, gate_first: gate_first, gate_second: gate_second)
+
+    # Custom sleeper that signals when the worker enters backoff sleep, then
+    # blocks on a queue so the test can park the worker exactly there.
+    sleeper = Class.new do
+      def initialize(in_sleep:)
+        @in_sleep = in_sleep
+        @gate = Queue.new
+      end
+
+      def call(_duration)
+        @in_sleep << :sleeping
+        @gate.pop
+      end
+
+      def release
+        100.times { @gate << :go }
+      end
+    end.new(in_sleep: in_sleep)
+
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: client,
+      backoff: [0],
+      sleeper: sleeper,
+    )
+
+    manager.start { |_| }
+    in_first.pop # parked inside each_event #1
+    gate_first << :go # let each_event return normally → worker enters backoff sleep
+    in_sleep.pop # worker is now blocked in @sleeper.call
+
+    # Fire force_reconnect; this raises Stalled into the worker thread while
+    # it is in the backoff sleep — which is OUTSIDE the inner `rescue Stalled`
+    # around each_event. The outer loop must catch it and continue.
+    manager.force_reconnect
+
+    sleeper.release
+
+    # Wait for the worker to enter each_event the second time. If the Stalled
+    # escaped run/, the thread is dead and we'll never see calls==2.
+    100.times do
+      break if client.calls >= 2
+      sleep 0.01
+    end
+
+    assert_equal 2, client.calls,
+      "Stalled raised during backoff sleep must not kill the worker"
+    assert manager.running?, "worker must still be alive after Stalled in sleep"
+
+    client.release
+    manager.stop
+  end
+
+  # Regression: after force_reconnect, the watchdog used to immediately re-fire
+  # (because @last_event_at was unchanged), raising a second Stalled at a
+  # vulnerable spot. Reset last_event_at to "now" inside force_reconnect so a
+  # follow-up tick sees the connection as fresh and the worker gets time to
+  # reconnect.
+  def test_force_reconnect_resets_last_event_at_to_prevent_double_fire
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:x", time_us: 1,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "r", cid: nil, text: "hi", created_at: "2026-01-01T00:00:00Z",
+    )
+    client = FakeClient.new(events: [event], block_on_iteration: true)
+
+    now = Time.utc(2026, 5, 17, 0, 0, 0)
+    event_time = Time.utc(2026, 5, 16, 23, 0, 0) # 1h ago — would trip a 600s watchdog
+    clock_times = [event_time, now]
+    clock = -> { clock_times.length > 1 ? clock_times.shift : clock_times.first }
+
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: client,
+      backoff: [0],
+      clock: clock,
+    )
+    manager.start { |_| }
+
+    # Wait until the worker has yielded one event and recorded last_event_at.
+    100.times do
+      break if manager.last_event_at
+      sleep 0.005
+    end
+    assert_equal event_time, manager.last_event_at
+
+    manager.force_reconnect
+
+    # Inspect immediately: last_event_at should be advanced to `now` so the
+    # next watchdog tick won't see it as stale and re-fire.
+    assert_equal now, manager.last_event_at,
+      "force_reconnect must reset last_event_at to the current clock time"
+
+    manager.stop
+  end
 end
