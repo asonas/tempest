@@ -109,4 +109,16 @@ class TestREPLDispatcher < Minitest::Test
     assert_equal :post, cmd.name
     assert_equal ["$aa hello"], cmd.args
   end
+
+  def test_colon_fav_with_id_returns_fav_command
+    cmd = @dispatcher.dispatch(":fav $AA")
+    assert_equal :fav, cmd.name
+    assert_equal ["$AA"], cmd.args
+  end
+
+  def test_colon_fav_without_arg_returns_fav_command_with_empty_args
+    cmd = @dispatcher.dispatch(":fav")
+    assert_equal :fav, cmd.name
+    assert_equal [], cmd.args
+  end
 end

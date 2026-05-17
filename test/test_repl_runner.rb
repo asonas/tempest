@@ -936,4 +936,113 @@ class TestREPLRunner < Minitest::Test
     assert_equal [FacetTimelineClient::REAL_URL], opener.calls
     assert_match(/\[www\.kelloggs\.com \$LA\]/, @output.string)
   end
+
+  def test_fav_to_unknown_id_prints_unknown_id_and_does_not_post
+    out = run_with([":fav $ZZ", ":quit"])
+    assert_match(/unknown id: \$ZZ/, out)
+    assert_empty @client.post_calls
+  end
+
+  def test_fav_without_arg_prints_usage_and_does_not_post
+    out = run_with([":fav", ":quit"])
+    assert_match(/usage: :fav \$XX/, out)
+    assert_empty @client.post_calls
+  end
+
+  def test_fav_happy_path_creates_like_record_pointing_at_assigned_post
+    out = run_with([":timeline", ":fav $AA", ":quit"])
+
+    assert_equal 1, @client.post_calls.length
+    nsid, body = @client.post_calls.first
+    assert_equal "com.atproto.repo.createRecord", nsid
+    assert_equal "did:plc:abc", body[:repo]
+    assert_equal "app.bsky.feed.like", body[:collection]
+    record = body[:record]
+    assert_equal "app.bsky.feed.like", record["$type"]
+    assert_equal "at://did:plc:a/app.bsky.feed.post/1", record["subject"]["uri"]
+    assert_equal "bafy", record["subject"]["cid"]
+    assert_match(/liked: at:\/\//, out)
+  end
+
+  class FavAuthExpiringClient
+    FEED_RESPONSE = {
+      "feed" => [
+        {
+          "post" => {
+            "uri" => "at://did:plc:a/app.bsky.feed.post/1",
+            "cid" => "bafy",
+            "author" => { "handle" => "alice.bsky.social" },
+            "record" => { "text" => "hi", "createdAt" => "2026-05-15T00:00:00.000Z" },
+          },
+        },
+      ],
+    }.freeze
+
+    def get(_nsid, query: nil)
+      FEED_RESPONSE
+    end
+
+    def post(*)
+      raise Tempest::AuthenticationError.new(
+        "refreshSession failed (400): Token has been revoked",
+        code: "ExpiredToken",
+      )
+    end
+  end
+
+  def test_fav_authentication_error_hints_to_relogin
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: FavAuthExpiringClient.new,
+      input: StubReader.new([":timeline", ":fav $AA", ":quit"]),
+      output: @output,
+    )
+    runner.run
+
+    out = @output.string
+    assert_match(/error:.*revoked/i, out)
+    assert_match(/:relogin/, out)
+  end
+
+  class FavGenericErrorClient
+    FEED_RESPONSE = {
+      "feed" => [
+        {
+          "post" => {
+            "uri" => "at://did:plc:a/app.bsky.feed.post/1",
+            "cid" => "bafy",
+            "author" => { "handle" => "alice.bsky.social" },
+            "record" => { "text" => "hi", "createdAt" => "2026-05-15T00:00:00.000Z" },
+          },
+        },
+      ],
+    }.freeze
+
+    def get(_nsid, query: nil)
+      FEED_RESPONSE
+    end
+
+    def post(*)
+      raise Tempest::Error.new("boom")
+    end
+  end
+
+  def test_fav_generic_error_is_reported_without_relogin_hint
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: FavGenericErrorClient.new,
+      input: StubReader.new([":timeline", ":fav $AA", ":quit"]),
+      output: @output,
+    )
+    runner.run
+
+    out = @output.string
+    assert_match(/error: boom/, out)
+    refute_match(/:relogin/, out)
+  end
+
+  def test_help_lists_fav_command
+    out = run_with([":help", ":quit"])
+    assert_match(/:fav \$XX/, out)
+  end
 end

@@ -5,7 +5,7 @@ module Tempest
     Command = Data.define(:name, :args)
 
     class Dispatcher
-      KNOWN_COMMANDS = %i[timeline quit help stream open relogin].freeze
+      KNOWN_COMMANDS = %i[timeline quit help stream open relogin fav].freeze
       DOLLAR_ID = /\A\$[A-Z]{2}\z/.freeze
 
       def dispatch(input)

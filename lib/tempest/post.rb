@@ -58,6 +58,26 @@ module Tempest
       )
     end
 
+    # Compose an app.bsky.feed.like record referencing the subject post and
+    # send it via com.atproto.repo.createRecord. The AppView surfaces this in
+    # like counts and notifications for the target post.
+    def self.like(client, did:, subject_uri:, subject_cid:,
+                  created_at: Time.now.utc.strftime("%Y-%m-%dT%H:%M:%S.%LZ"))
+      record = {
+        "$type" => "app.bsky.feed.like",
+        "subject" => { "uri" => subject_uri, "cid" => subject_cid },
+        "createdAt" => created_at,
+      }
+      client.post(
+        "com.atproto.repo.createRecord",
+        body: {
+          repo: did,
+          collection: "app.bsky.feed.like",
+          record: record,
+        },
+      )
+    end
+
     # Scans `text` for bare URLs and builds AT Protocol link facets pointing
     # at each match. Without this, the AppView treats URLs as plain text and
     # does not render them as clickable links.

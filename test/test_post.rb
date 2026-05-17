@@ -214,6 +214,61 @@ class TestPostCreate < Minitest::Test
   end
 end
 
+class TestPostLike < Minitest::Test
+  class FakeClient
+    attr_reader :calls
+
+    def initialize(response = {})
+      @response = response
+      @calls = []
+    end
+
+    def post(nsid, body:)
+      @calls << [nsid, body]
+      @response
+    end
+  end
+
+  def test_like_calls_create_record_with_like_record_pointing_at_subject
+    client = FakeClient.new(
+      "uri" => "at://did:plc:abc/app.bsky.feed.like/rkey",
+      "cid" => "bafylike",
+    )
+
+    response = Tempest::Post.like(
+      client,
+      did: "did:plc:abc",
+      subject_uri: "at://did:plc:author/app.bsky.feed.post/target",
+      subject_cid: "bafytarget",
+      created_at: "2026-05-15T00:00:00.000Z",
+    )
+
+    assert_equal 1, client.calls.length
+    nsid, body = client.calls.first
+    assert_equal "com.atproto.repo.createRecord", nsid
+    assert_equal "did:plc:abc", body[:repo]
+    assert_equal "app.bsky.feed.like", body[:collection]
+    record = body[:record]
+    assert_equal "app.bsky.feed.like", record["$type"]
+    assert_equal "2026-05-15T00:00:00.000Z", record["createdAt"]
+    assert_equal "at://did:plc:author/app.bsky.feed.post/target", record["subject"]["uri"]
+    assert_equal "bafytarget", record["subject"]["cid"]
+    assert_equal "at://did:plc:abc/app.bsky.feed.like/rkey", response["uri"]
+  end
+
+  def test_like_defaults_created_at_to_now_in_iso8601_utc
+    client = FakeClient.new("uri" => "at://x")
+    Tempest::Post.like(
+      client,
+      did: "did:plc:abc",
+      subject_uri: "at://did:plc:author/app.bsky.feed.post/y",
+      subject_cid: "bafy",
+    )
+    _, body = client.calls.first
+    assert_match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\z/, body[:record]["createdAt"])
+  end
+end
+
 class TestPostFromFeedView < Minitest::Test
   def test_extracts_reply_parent_uri_from_record
     raw = {

@@ -18,6 +18,7 @@ module Tempest
           :timeline       Fetch and print the home timeline
           :stream on|off  Toggle the Jetstream live feed
           :open $LX       Open the URL with id $LX in the browser
+          :fav $XX        Like the post with id $XX
           :relogin        Re-authenticate when the cached session is dead
           :help           Show this help
           :quit           Exit tempest (or Ctrl-D)
@@ -108,6 +109,8 @@ module Tempest
             handle_reply(command.args[0], command.args[1])
           when :open
             handle_open(command.args.first)
+          when :fav
+            handle_fav(command.args.first)
           when :relogin
             handle_relogin
           when :unknown
@@ -176,6 +179,29 @@ module Tempest
           reply: { uri: reply_uri_for(target), cid: target.cid },
         )
         @output.puts "posted: #{response["uri"]}"
+      rescue Tempest::AuthenticationError => e
+        @output.puts "error: #{e.message} (#{RELOGIN_HINT})"
+      rescue Tempest::Error => e
+        @output.puts "error: #{e.message}"
+      end
+
+      def handle_fav(var)
+        if var.nil? || var.empty?
+          @output.puts "usage: :fav $XX"
+          return
+        end
+        target = @registry.find_post(var)
+        if target.nil?
+          @output.puts "unknown id: #{var}"
+          return
+        end
+        response = Post.like(
+          @client,
+          did: @session.did,
+          subject_uri: reply_uri_for(target),
+          subject_cid: target.cid,
+        )
+        @output.puts "liked: #{response["uri"]}"
       rescue Tempest::AuthenticationError => e
         @output.puts "error: #{e.message} (#{RELOGIN_HINT})"
       rescue Tempest::Error => e
