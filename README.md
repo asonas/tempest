@@ -37,6 +37,24 @@ bundle install
 bundle exec exe/tempest
 ```
 
+## Upgrading
+
+The gem on RubyGems is `tempest-rb`, while the executable it ships is `tempest`.
+
+If you installed it with `gem install`:
+
+```sh
+gem update tempest-rb
+```
+
+To check the currently installed version:
+
+```sh
+tempest --version
+```
+
+If you use Bundler in your own project, bump the requirement in your `Gemfile` and run `bundle update tempest-rb` instead.
+
 ## Usage
 
 Set your credentials in the environment and run `tempest`:
