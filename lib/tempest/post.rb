@@ -31,7 +31,7 @@ module Tempest
     # target. This is correct for top-level replies and a known v1 trade-off
     # for replies deeper in a thread (AppView will nest the reply under
     # `parent` instead of the original conversation root).
-    def self.create(client, did:, text:, reply: nil,
+    def self.create(client, did:, text:, reply: nil, langs: nil,
                     created_at: Time.now.utc.strftime("%Y-%m-%dT%H:%M:%S.%LZ"))
       record = {
         "$type" => "app.bsky.feed.post",
@@ -42,6 +42,8 @@ module Tempest
         ref = { "uri" => reply[:uri], "cid" => reply[:cid] }
         record["reply"] = { "root" => ref, "parent" => ref }
       end
+
+      record["langs"] = langs if langs && !langs.empty?
 
       link_facets = detect_link_facets(text)
       record["facets"] = link_facets unless link_facets.empty?

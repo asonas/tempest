@@ -198,6 +198,20 @@ class TestPostCreate < Minitest::Test
     assert_equal expected_start, facet["index"]["byteStart"]
     assert_equal expected_end, facet["index"]["byteEnd"]
   end
+
+  def test_create_writes_langs_into_record
+    client = FakeClient.new("uri" => "at://x")
+    Tempest::Post.create(client, did: "did:plc:abc", text: "hi", langs: ["ja", "en"])
+    _, body = client.calls.first
+    assert_equal ["ja", "en"], body[:record]["langs"]
+  end
+
+  def test_create_omits_langs_when_not_given
+    client = FakeClient.new("uri" => "at://x")
+    Tempest::Post.create(client, did: "did:plc:abc", text: "hi")
+    _, body = client.calls.first
+    refute body[:record].key?("langs")
+  end
 end
 
 class TestPostFromFeedView < Minitest::Test
