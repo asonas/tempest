@@ -2,6 +2,7 @@ require "json"
 
 require_relative "../../tempest"
 require_relative "../facet"
+require_relative "../post"
 
 module Tempest
   module Jetstream
@@ -18,10 +19,11 @@ module Tempest
       :subject_uri,
       :facets,
       :reply_parent_uri,
+      :embed_kind,
     ) do
       def initialize(kind:, did:, time_us:, collection:, operation:, rkey:, cid:,
                      text:, created_at:, subject_uri: nil, facets: [],
-                     reply_parent_uri: nil)
+                     reply_parent_uri: nil, embed_kind: nil)
         super
       end
 
@@ -72,6 +74,7 @@ module Tempest
           subject_uri: subject.is_a?(Hash) ? subject["uri"] : nil,
           facets: Tempest::Facet.parse(record["facets"]),
           reply_parent_uri: reply_parent.is_a?(Hash) ? reply_parent["uri"] : nil,
+          embed_kind: Tempest::Post.embed_kind_from(record["embed"]),
         )
       rescue JSON::ParserError
         nil

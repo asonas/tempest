@@ -70,6 +70,46 @@ class TestPostFromFeedView < Minitest::Test
     post = Tempest::Post.from_feed_view({})
     assert_equal [], post.facets
   end
+
+  def test_from_feed_view_classifies_images_embed_as_images
+    raw = base_feed_view
+    raw["record"]["embed"] = { "$type" => "app.bsky.embed.images" }
+    post = Tempest::Post.from_feed_view(raw)
+    assert_equal :images, post.embed_kind
+  end
+
+  def test_from_feed_view_classifies_video_embed_as_video
+    raw = base_feed_view
+    raw["record"]["embed"] = { "$type" => "app.bsky.embed.video" }
+    post = Tempest::Post.from_feed_view(raw)
+    assert_equal :video, post.embed_kind
+  end
+
+  def test_from_feed_view_returns_nil_embed_kind_for_record_quote
+    raw = base_feed_view
+    raw["record"]["embed"] = { "$type" => "app.bsky.embed.record" }
+    post = Tempest::Post.from_feed_view(raw)
+    assert_nil post.embed_kind
+  end
+
+  def test_from_feed_view_returns_nil_embed_kind_for_external_link
+    raw = base_feed_view
+    raw["record"]["embed"] = { "$type" => "app.bsky.embed.external" }
+    post = Tempest::Post.from_feed_view(raw)
+    assert_nil post.embed_kind
+  end
+
+  def test_from_feed_view_returns_nil_embed_kind_when_record_has_no_embed
+    post = Tempest::Post.from_feed_view(base_feed_view)
+    assert_nil post.embed_kind
+  end
+
+  def test_from_feed_view_classifies_images_view_variant_from_top_level_embed
+    raw = base_feed_view
+    raw["embed"] = { "$type" => "app.bsky.embed.images#view" }
+    post = Tempest::Post.from_feed_view(raw)
+    assert_equal :images, post.embed_kind
+  end
 end
 
 class TestPostCreate < Minitest::Test

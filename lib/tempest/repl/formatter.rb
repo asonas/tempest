@@ -25,6 +25,14 @@ module Tempest
       URL_PATTERN = %r{https?://[^\s]+}.freeze
       DECORATE_PATTERN = Regexp.union(URL_PATTERN, HASHTAG_PATTERN).freeze
 
+      # Visible hint that a post carries an image / video embed. Only kinds
+      # that aren't already surfaced by other UI (link cards become URLs,
+      # quote posts inline their record) get a marker.
+      MEDIA_EMOJI = {
+        images: "📷",
+        video:  "🎥",
+      }.freeze
+
       class << self
         attr_accessor :color
       end
@@ -37,6 +45,7 @@ module Tempest
         facets = post.respond_to?(:facets) ? post.facets : nil
         body = annotate_urls(squeeze(post.text), registry, facets: facets)
         body = decorate_body(body)
+        body = prepend_media_marker(body, embed_kind_of(post))
         body = prepend_reply_marker(body, reply_parent_uri_of(post), registry)
         icon = avatar_icon(post_did(post), avatar_store)
         compose(var, format_time(post.created_at), post.handle, nil, body, icon: icon)
@@ -87,6 +96,7 @@ module Tempest
           facets = event.respond_to?(:facets) ? event.facets : nil
           body = annotate_urls(squeeze(event.text), registry, facets: facets)
           body = decorate_body(body)
+          body = prepend_media_marker(body, embed_kind_of(event))
           body = prepend_reply_marker(body, reply_parent_uri_of(event), registry)
           var = registry&.assign_post(event)
         end
@@ -125,6 +135,17 @@ module Tempest
         parent_var = registry.var_for_uri(reply_parent_uri)
         marker = parent_var ? "↪#{parent_var} " : "↪ "
         "#{marker}#{body}"
+      end
+
+      def embed_kind_of(record)
+        record.respond_to?(:embed_kind) ? record.embed_kind : nil
+      end
+
+      def prepend_media_marker(body, embed_kind)
+        emoji = MEDIA_EMOJI[embed_kind]
+        return body unless emoji
+        body = body.to_s
+        body.empty? ? emoji : "#{emoji} #{body}"
       end
 
       def annotate_urls(text, registry, facets: nil)

@@ -295,4 +295,65 @@ class TestJetstreamDecoder < Minitest::Test
     )
     assert_equal "at://did:plc:x/app.bsky.feed.post/abc", event.at_uri
   end
+
+  def test_decode_classifies_images_embed_kind
+    payload = {
+      did: "did:plc:x",
+      time_us: 10,
+      kind: "commit",
+      commit: {
+        operation: "create",
+        collection: "app.bsky.feed.post",
+        rkey: "r",
+        record: {
+          "$type" => "app.bsky.feed.post",
+          text: "look",
+          createdAt: "2026-01-01T00:00:00Z",
+          embed: { "$type" => "app.bsky.embed.images" },
+        },
+      },
+    }.to_json
+
+    event = decode(payload)
+    assert_equal :images, event.embed_kind
+  end
+
+  def test_decode_classifies_video_embed_kind
+    payload = {
+      did: "did:plc:x",
+      time_us: 11,
+      kind: "commit",
+      commit: {
+        operation: "create",
+        collection: "app.bsky.feed.post",
+        rkey: "r",
+        record: {
+          "$type" => "app.bsky.feed.post",
+          text: "watch",
+          createdAt: "2026-01-01T00:00:00Z",
+          embed: { "$type" => "app.bsky.embed.video" },
+        },
+      },
+    }.to_json
+
+    event = decode(payload)
+    assert_equal :video, event.embed_kind
+  end
+
+  def test_decode_returns_nil_embed_kind_when_record_has_no_embed
+    payload = {
+      did: "did:plc:x",
+      time_us: 12,
+      kind: "commit",
+      commit: {
+        operation: "create",
+        collection: "app.bsky.feed.post",
+        rkey: "r",
+        record: { "$type" => "app.bsky.feed.post", text: "plain", createdAt: "2026-01-01T00:00:00Z" },
+      },
+    }.to_json
+
+    event = decode(payload)
+    assert_nil event.embed_kind
+  end
 end

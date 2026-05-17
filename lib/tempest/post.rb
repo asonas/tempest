@@ -2,9 +2,18 @@ require_relative "../tempest"
 require_relative "facet"
 
 module Tempest
-  Post = Data.define(:uri, :cid, :handle, :display_name, :text, :created_at, :facets, :reply_parent_uri) do
+  Post = Data.define(:uri, :cid, :handle, :display_name, :text, :created_at, :facets, :reply_parent_uri, :embed_kind) do
+    # AT Protocol embed `$type` values mapped to short symbols used by the
+    # REPL. `record` (quote) and `external` (link card) are intentionally
+    # absent: they're surfaced through other UI (URL annotation), so they
+    # don't get a media-marker emoji.
+    EMBED_KINDS = {
+      "app.bsky.embed.images" => :images,
+      "app.bsky.embed.video"  => :video,
+    }.freeze
+
     def initialize(uri:, cid:, handle:, display_name:, text:, created_at:,
-                   facets: [], reply_parent_uri: nil)
+                   facets: [], reply_parent_uri: nil, embed_kind: nil)
       super
     end
 
@@ -23,7 +32,18 @@ module Tempest
         created_at: record["createdAt"],
         facets: Facet.parse(record["facets"]),
         reply_parent_uri: reply_parent.is_a?(Hash) ? reply_parent["uri"] : nil,
+        embed_kind: embed_kind_from(post["embed"] || record["embed"]),
       )
+    end
+
+    # The view-side `$type` carries a `#view` suffix (e.g.
+    # `app.bsky.embed.images#view`); the raw record uses the bare form.
+    # Strip the suffix before looking up so both feed and Jetstream payloads
+    # classify identically.
+    def self.embed_kind_from(embed)
+      return nil unless embed.is_a?(Hash)
+      type = embed["$type"].to_s.sub(/#view\z/, "")
+      EMBED_KINDS[type]
     end
 
     # Compose a record for com.atproto.repo.createRecord (app.bsky.feed.post).

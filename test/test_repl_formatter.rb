@@ -634,4 +634,76 @@ class TestREPLFormatter < Minitest::Test
     line = Tempest::REPL::Formatter.event_line(event, registry: registry)
     refute_match(/\[\$AA\]/, line)
   end
+
+  def test_post_line_prepends_camera_emoji_for_image_embed
+    post = Tempest::Post.new(
+      uri: "at://x", cid: "bafy", handle: "alice.bsky.social",
+      display_name: nil, text: "look at this", created_at: "2026-05-15T01:00:00.000Z",
+      embed_kind: :images,
+    )
+    line = Tempest::REPL::Formatter.post_line(post)
+    assert_equal "[10:00] @alice.bsky.social: 📷 look at this", line
+  end
+
+  def test_post_line_prepends_movie_emoji_for_video_embed
+    post = Tempest::Post.new(
+      uri: "at://x", cid: "bafy", handle: "alice.bsky.social",
+      display_name: nil, text: "clip", created_at: "2026-05-15T01:00:00.000Z",
+      embed_kind: :video,
+    )
+    line = Tempest::REPL::Formatter.post_line(post)
+    assert_equal "[10:00] @alice.bsky.social: 🎥 clip", line
+  end
+
+  def test_post_line_omits_media_marker_when_embed_kind_is_nil
+    post = Tempest::Post.new(
+      uri: "at://x", cid: "bafy", handle: "alice.bsky.social",
+      display_name: nil, text: "plain", created_at: "2026-05-15T01:00:00.000Z",
+    )
+    line = Tempest::REPL::Formatter.post_line(post)
+    refute_includes line, "📷"
+    refute_includes line, "🎥"
+  end
+
+  def test_post_line_emits_only_marker_when_body_is_empty
+    post = Tempest::Post.new(
+      uri: "at://x", cid: "bafy", handle: "alice.bsky.social",
+      display_name: nil, text: "", created_at: "2026-05-15T01:00:00.000Z",
+      embed_kind: :images,
+    )
+    line = Tempest::REPL::Formatter.post_line(post)
+    assert_equal "[10:00] @alice.bsky.social: 📷", line
+  end
+
+  def test_post_line_keeps_reply_marker_before_media_marker
+    registry = Tempest::REPL::Registry.new
+    parent = Tempest::Post.new(
+      uri: "at://did:plc:a/app.bsky.feed.post/parent",
+      cid: "bafyparent", handle: "bob.bsky.social",
+      display_name: nil, text: "original", created_at: "2026-05-15T00:00:00.000Z",
+    )
+    Tempest::REPL::Formatter.post_line(parent, registry: registry)
+
+    reply = Tempest::Post.new(
+      uri: "at://did:plc:b/app.bsky.feed.post/reply",
+      cid: "bafyreply", handle: "alice.bsky.social",
+      display_name: nil, text: "with photo", created_at: "2026-05-15T01:00:00.000Z",
+      reply_parent_uri: "at://did:plc:a/app.bsky.feed.post/parent",
+      embed_kind: :images,
+    )
+    line = Tempest::REPL::Formatter.post_line(reply, registry: registry)
+    assert_match(/: ↪\$AA 📷 with photo\z/, line)
+  end
+
+  def test_event_line_prepends_camera_emoji_for_image_embed
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:abc", time_us: 1,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "r", cid: nil, text: "live shot", created_at: nil,
+      embed_kind: :images,
+    )
+    resolver = StubResolver.new("did:plc:abc" => "alice.bsky.social")
+    line = Tempest::REPL::Formatter.event_line(event, resolver: resolver)
+    assert_includes line, "📷 live shot"
+  end
 end
