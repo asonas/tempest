@@ -2,6 +2,8 @@ require_relative "../tempest"
 require_relative "commands/tui"
 require_relative "commands/base"
 require_relative "commands/whoami"
+require_relative "commands/post"
+require_relative "xrpc_client"
 
 module Tempest
   module CLI
@@ -29,6 +31,14 @@ module Tempest
         Tempest::Commands::Tui.call(
           argv: rest, env: env, stdout: stdout, stderr: stderr, stdin: stdin,
           session_factory: session_factory, store: store,
+        )
+      when head == "post"
+        session = Tempest::Commands::Base.authenticate(env: env, stderr: stderr)
+        return 3 if session.nil?
+        Tempest::Commands::Post.call(
+          argv: argv.drop(1), session: session,
+          client: Tempest::XRPCClient.new(session),
+          stdout: stdout, stderr: stderr, stdin: stdin,
         )
       when head == "whoami"
         session = Tempest::Commands::Base.authenticate(env: env, stderr: stderr)
