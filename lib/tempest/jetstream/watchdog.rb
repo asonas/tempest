@@ -11,8 +11,13 @@ module Tempest
     # therefore never runs. The watchdog periodically inspects
     # `stream_manager.last_event_at` and, if no event has arrived within
     # `threshold_seconds`, calls `force_reconnect` to break the stalled call.
+    #
+    # The threshold has to be long enough that a quiet but healthy stream
+    # (e.g. `--feed=self`, where only the user's own posts come through)
+    # doesn't trip it. macOS sleeps are typically minutes to hours, so 10
+    # minutes catches real stalls without flapping on idle streams.
     class Watchdog
-      DEFAULT_THRESHOLD_SECONDS = 90
+      DEFAULT_THRESHOLD_SECONDS = 600
       DEFAULT_INTERVAL_SECONDS = 30
 
       def initialize(stream_manager:,
