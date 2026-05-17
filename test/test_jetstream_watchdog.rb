@@ -1,5 +1,6 @@
 require_relative "test_helper"
 require "logger"
+require "tempest/debug_log"
 require "tempest/jetstream/watchdog"
 
 class TestJetstreamWatchdog < Minitest::Test
@@ -208,7 +209,7 @@ class TestJetstreamWatchdog < Minitest::Test
   end
 
   def test_accepts_logger_keyword
-    logger = Logger.new(IO::NULL)
+    channel = Tempest::DebugLog.null_channel
     stream = FakeStreamManager.new(last_event_at: nil)
     sleeper = TickSleeper.new
 
@@ -218,7 +219,7 @@ class TestJetstreamWatchdog < Minitest::Test
       interval_seconds: 30,
       clock: -> { Time.now },
       sleeper: sleeper,
-      logger: logger,
+      logger: channel,
     )
 
     watchdog.start

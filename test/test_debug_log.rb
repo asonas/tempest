@@ -2,129 +2,241 @@ require_relative "test_helper"
 require "tmpdir"
 require "fileutils"
 require "logger"
+require "stringio"
 require "tempest/debug_log"
 
 class TestDebugLog < Minitest::Test
-  def test_from_env_returns_null_logger_when_var_unset
-    logger = Tempest::DebugLog.from_env({})
+  # ----- Channel formatting ------------------------------------------------
 
-    # Should accept calls without raising or producing observable output.
-    logger.info("[stream]") { "should be discarded" }
-    logger.debug("nope")
-    logger.warn("[watchdog]") { "still discarded" }
+  def with_string_channel(level: Logger::DEBUG)
+    io = StringIO.new
+    logger = Logger.new(io)
+    logger.level = level
+    logger.formatter = Tempest::DebugLog.formatter
+    channel = Tempest::DebugLog::Channel.new(loggers: [logger])
+    yield channel, io
+  ensure
+    logger&.close
   end
 
-  def test_from_env_returns_null_logger_when_var_empty
-    logger = Tempest::DebugLog.from_env({ "TEMPEST_DEBUG_LOG" => "" })
-    logger.info("[stream]") { "still discarded" }
+  def test_format_uses_logfmt_with_required_keys
+    with_string_channel do |channel, io|
+      channel.info("stream", event: "subscribe", cursor: nil, attempt: 0)
+
+      line = io.string.lines.find { |l| l.include?("event=subscribe") }
+      refute_nil line, "expected an info line to be written"
+
+      assert_match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+\-]\d{2}:\d{2} /, line)
+      assert_match(/\blevel=info\b/, line)
+      assert_match(/\bmodule=stream\b/, line)
+      assert_match(/\bevent=subscribe\b/, line)
+      assert_match(/\bcursor=nil\b/, line)
+      assert_match(/\battempt=0\b/, line)
+    end
   end
 
-  def test_from_env_creates_file_when_path_given
+  def test_format_quotes_values_with_whitespace_or_quotes
+    with_string_channel do |channel, io|
+      channel.warn("stream", event: "disconnect", error_message: 'oops "boom"')
+
+      line = io.string.lines.first
+      assert_match(/error_message="oops \\"boom\\""/, line)
+    end
+  end
+
+  def test_format_renders_time_as_iso8601
+    with_string_channel do |channel, io|
+      t = Time.utc(2026, 5, 17, 12, 34, 56)
+      channel.info("stream", event: "worker_start", last_event_at: t)
+      line = io.string.lines.first
+      assert_includes line, "last_event_at=2026-05-17T12:34:56Z"
+    end
+  end
+
+  def test_format_renders_nil_as_literal_nil
+    with_string_channel do |channel, io|
+      channel.info("stream", event: "subscribe", cursor: nil)
+      assert_match(/\bcursor=nil\b/, io.string)
+    end
+  end
+
+  def test_format_renders_booleans
+    with_string_channel do |channel, io|
+      channel.debug("watchdog", event: "tick", running: true)
+      assert_match(/\brunning=true\b/, io.string)
+    end
+  end
+
+  def test_levels_route_to_correct_logger_severity
+    with_string_channel do |channel, io|
+      channel.debug("stream", event: "cursor_save", cursor: 42)
+      channel.info("stream", event: "subscribe", cursor: 43)
+      channel.warn("watchdog", event: "stalled_detected", elapsed_seconds: 612)
+      channel.error("watchdog", event: "tick_error", error_class: "RuntimeError")
+
+      content = io.string
+      assert_match(/level=debug.*event=cursor_save/, content)
+      assert_match(/level=info.*event=subscribe/, content)
+      assert_match(/level=warn.*event=stalled_detected/, content)
+      assert_match(/level=error.*event=tick_error/, content)
+    end
+  end
+
+  # ----- Multi-channel routing --------------------------------------------
+
+  def test_channel_writes_to_every_underlying_logger
+    info_io = StringIO.new
+    debug_io = StringIO.new
+    info_logger = Logger.new(info_io)
+    info_logger.level = Logger::INFO
+    info_logger.formatter = Tempest::DebugLog.formatter
+    debug_logger = Logger.new(debug_io)
+    debug_logger.level = Logger::DEBUG
+    debug_logger.formatter = Tempest::DebugLog.formatter
+
+    channel = Tempest::DebugLog::Channel.new(loggers: [info_logger, debug_logger])
+
+    channel.info("stream", event: "subscribe")
+    channel.debug("stream", event: "cursor_save", cursor: 7)
+
+    assert_match(/event=subscribe/, info_io.string)
+    refute_match(/event=cursor_save/, info_io.string)
+
+    assert_match(/event=subscribe/, debug_io.string)
+    assert_match(/event=cursor_save/, debug_io.string)
+  end
+
+  # ----- Null channel ------------------------------------------------------
+
+  def test_null_channel_swallows_calls
+    channel = Tempest::DebugLog.null_channel
+    channel.info("stream", event: "subscribe")
+    channel.debug("stream", event: "cursor_save", cursor: 1)
+    channel.warn("watchdog", event: "stalled_detected")
+    channel.error("watchdog", event: "tick_error")
+  end
+
+  # ----- Builder -----------------------------------------------------------
+
+  def test_build_returns_empty_channel_when_disabled_via_env
+    channel = Tempest::DebugLog.build(env: { "TEMPEST_NO_LOG" => "1" })
+    assert_kind_of Tempest::DebugLog::Channel, channel
+    assert_empty channel.loggers
+  end
+
+  def test_build_creates_info_log_at_default_xdg_state_path
+    Dir.mktmpdir do |home|
+      env = { "HOME" => home }
+      channel = Tempest::DebugLog.build(env: env)
+      channel.info("stream", event: "subscribe", cursor: 1)
+      channel.close
+
+      info_path = File.join(home, ".local", "state", "tempest", "info.log")
+      assert File.exist?(info_path), "expected info.log at #{info_path}"
+      assert_match(/event=subscribe/, File.read(info_path))
+    end
+  end
+
+  def test_build_honors_xdg_state_home
+    Dir.mktmpdir do |base|
+      env = { "XDG_STATE_HOME" => base, "HOME" => "/nonexistent" }
+      channel = Tempest::DebugLog.build(env: env)
+      channel.info("stream", event: "subscribe", cursor: 1)
+      channel.close
+
+      assert File.exist?(File.join(base, "tempest", "info.log"))
+    end
+  end
+
+  def test_build_honors_tempest_log_dir
     Dir.mktmpdir do |dir|
-      path = File.join(dir, "debug.log")
-      logger = Tempest::DebugLog.from_env({ "TEMPEST_DEBUG_LOG" => path })
+      env = { "TEMPEST_LOG_DIR" => dir }
+      channel = Tempest::DebugLog.build(env: env)
+      channel.info("stream", event: "subscribe", cursor: 1)
+      channel.close
 
-      logger.info("stream") { "hello world" }
-      logger.close if logger.respond_to?(:close)
+      assert File.exist?(File.join(dir, "info.log"))
+    end
+  end
 
-      assert File.exist?(path), "log file should be created at #{path}"
+  def test_build_enables_debug_file_only_when_debug_flag_true
+    Dir.mktmpdir do |dir|
+      env = { "TEMPEST_LOG_DIR" => dir }
+      channel = Tempest::DebugLog.build(env: env, debug: true)
+      channel.info("stream", event: "subscribe", cursor: 1)
+      channel.debug("stream", event: "cursor_save", cursor: 2)
+      channel.close
+
+      info_path = File.join(dir, "info.log")
+      debug_path = File.join(dir, "debug.log")
+
+      assert File.exist?(info_path)
+      assert File.exist?(debug_path)
+
+      info_content = File.read(info_path)
+      debug_content = File.read(debug_path)
+
+      assert_match(/event=subscribe/, info_content)
+      refute_match(/event=cursor_save/, info_content)
+
+      assert_match(/event=subscribe/, debug_content)
+      assert_match(/event=cursor_save/, debug_content)
+    end
+  end
+
+  def test_build_without_debug_flag_does_not_create_debug_log
+    Dir.mktmpdir do |dir|
+      env = { "TEMPEST_LOG_DIR" => dir }
+      channel = Tempest::DebugLog.build(env: env)
+      channel.info("stream", event: "subscribe", cursor: 1)
+      channel.close
+
+      refute File.exist?(File.join(dir, "debug.log"))
+    end
+  end
+
+  def test_build_creates_parent_directories
+    Dir.mktmpdir do |base|
+      env = { "TEMPEST_LOG_DIR" => File.join(base, "nested", "deeper") }
+      channel = Tempest::DebugLog.build(env: env)
+      channel.info("stream", event: "subscribe")
+      channel.close
+
+      assert File.exist?(File.join(base, "nested", "deeper", "info.log"))
+    end
+  end
+
+  def test_build_supports_legacy_single_file_path_env
+    # Backward compat for callers (and tests) that pre-date the two-file scheme.
+    # TEMPEST_NO_LOG=1 disables the default paths, but the legacy var still
+    # wins for that one file.
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "combined.log")
+      env = { "TEMPEST_DEBUG_LOG" => path, "TEMPEST_NO_LOG" => "1" }
+      channel = Tempest::DebugLog.build(env: env)
+      channel.info("stream", event: "subscribe", cursor: 1)
+      channel.debug("stream", event: "cursor_save", cursor: 2)
+      channel.close
+
       content = File.read(path)
-      assert_match(/INFO/, content)
-      assert_match(/\[stream\]/, content)
-      assert_match(/hello world/, content)
+      assert_match(/event=subscribe/, content)
+      # Legacy mode defaults to DEBUG so existing diagnostic flows still work.
+      assert_match(/event=cursor_save/, content)
     end
   end
 
-  def test_from_env_creates_parent_directory_when_missing
+  def test_build_uses_size_based_rotation_for_files
     Dir.mktmpdir do |dir|
-      nested = File.join(dir, "nested", "deeper", "debug.log")
-      logger = Tempest::DebugLog.from_env({ "TEMPEST_DEBUG_LOG" => nested })
-
-      logger.info("tag") { "msg" }
-      logger.close if logger.respond_to?(:close)
-
-      assert File.exist?(nested)
-    end
-  end
-
-  def test_from_env_expands_tilde_in_path
-    Dir.mktmpdir do |dir|
-      orig_home = ENV["HOME"]
-      ENV["HOME"] = dir
-      begin
-        logger = Tempest::DebugLog.from_env({ "TEMPEST_DEBUG_LOG" => "~/tempest-debug.log" })
-        logger.info("tag") { "hi" }
-        logger.close if logger.respond_to?(:close)
-
-        assert File.exist?(File.join(dir, "tempest-debug.log"))
-      ensure
-        ENV["HOME"] = orig_home
+      env = { "TEMPEST_LOG_DIR" => dir }
+      channel = Tempest::DebugLog.build(env: env, debug: true)
+      refute_empty channel.loggers
+      channel.loggers.each do |logger|
+        logdev = logger.instance_variable_get(:@logdev)
+        refute_nil logdev, "expected log device on #{logger.inspect}"
+        shift_size = logdev.instance_variable_get(:@shift_size).to_i
+        assert_operator shift_size, :>, 0, "expected size-based rotation"
       end
-    end
-  end
-
-  def test_from_env_honors_level_override_debug
-    Dir.mktmpdir do |dir|
-      path = File.join(dir, "debug.log")
-      logger = Tempest::DebugLog.from_env({
-        "TEMPEST_DEBUG_LOG" => path,
-        "TEMPEST_DEBUG_LOG_LEVEL" => "DEBUG",
-      })
-
-      logger.debug("tag") { "debug-line" }
-      logger.close if logger.respond_to?(:close)
-
-      assert_match(/debug-line/, File.read(path))
-    end
-  end
-
-  def test_from_env_default_level_is_info_so_debug_is_suppressed
-    Dir.mktmpdir do |dir|
-      path = File.join(dir, "debug.log")
-      logger = Tempest::DebugLog.from_env({ "TEMPEST_DEBUG_LOG" => path })
-
-      logger.debug("tag") { "should-not-appear" }
-      logger.info("tag") { "should-appear" }
-      logger.close if logger.respond_to?(:close)
-
-      content = File.read(path)
-      refute_match(/should-not-appear/, content)
-      assert_match(/should-appear/, content)
-    end
-  end
-
-  def test_from_env_honors_level_override_warn
-    Dir.mktmpdir do |dir|
-      path = File.join(dir, "debug.log")
-      logger = Tempest::DebugLog.from_env({
-        "TEMPEST_DEBUG_LOG" => path,
-        "TEMPEST_DEBUG_LOG_LEVEL" => "WARN",
-      })
-
-      logger.info("tag") { "info-suppressed" }
-      logger.warn("tag") { "warn-shown" }
-      logger.close if logger.respond_to?(:close)
-
-      content = File.read(path)
-      refute_match(/info-suppressed/, content)
-      assert_match(/warn-shown/, content)
-    end
-  end
-
-  def test_format_includes_iso8601_timestamp_and_tag
-    Dir.mktmpdir do |dir|
-      path = File.join(dir, "debug.log")
-      logger = Tempest::DebugLog.from_env({ "TEMPEST_DEBUG_LOG" => path })
-
-      logger.info("stream") { "subscribe cursor=nil" }
-      logger.close if logger.respond_to?(:close)
-
-      line = File.read(path).lines.find { |l| l.include?("subscribe cursor=nil") }
-      refute_nil line, "expected log line to be present"
-      assert_match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+\-]\d{2}:\d{2}/, line)
-      assert_match(/INFO/, line)
-      assert_match(/\[stream\]/, line)
-      assert_match(/subscribe cursor=nil/, line)
+      channel.close
     end
   end
 end

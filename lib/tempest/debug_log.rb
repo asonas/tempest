@@ -3,15 +3,35 @@ require "fileutils"
 require "time"
 
 module Tempest
-  # Thin wrapper around stdlib Logger for opt-in debug logging.
+  # Structured diagnostic logging for tempest.
   #
-  # Activated only when the TEMPEST_DEBUG_LOG environment variable points at a
-  # writable path. Otherwise from_env returns a Logger pointed at IO::NULL at
-  # FATAL level, so call sites can unconditionally call `info`/`debug`/`warn`
-  # without an `if logger` guard and without producing any output or file I/O.
+  # `Tempest::DebugLog.build` returns a `Channel` that fans messages out to one
+  # or more underlying `::Logger` instances. The format is logfmt-flavored
+  # single-line:
   #
-  # Output format is ISO-8601 local time + level + progname tag + message, e.g.:
-  #   2026-05-17T10:30:42+09:00 INFO  [stream] reconnect attempt=2 cursor=nil
+  #   2026-05-18T01:23:45+09:00 level=warn module=watchdog event=stalled_detected elapsed_seconds=612.3 threshold_seconds=600
+  #
+  # The fixed leading keys (`level=`, `module=`, `event=`) are produced by the
+  # formatter from the level + progname + first-positional arguments, so call
+  # sites just write the variable fields as keyword arguments:
+  #
+  #   @logger.warn("watchdog", event: "stalled_detected", elapsed_seconds: 612.3, threshold_seconds: 600)
+  #
+  # Output destinations:
+  #
+  #   * `info.log` — INFO and above, always written when logging is enabled.
+  #   * `debug.log` — DEBUG and above, written only when `--debug` (or the
+  #     equivalent flag passed to `build(debug: true)`) is on.
+  #
+  # Default base directory is `$XDG_STATE_HOME/tempest` (falling back to
+  # `~/.local/state/tempest`). Override via `TEMPEST_LOG_DIR=/path` for the
+  # whole tree, or set `TEMPEST_NO_LOG=1` to disable both files entirely (used
+  # by tests). The legacy `TEMPEST_DEBUG_LOG=/path/to/file` env var still
+  # works and routes everything (DEBUG and above) to a single file regardless
+  # of the other settings.
+  #
+  # All file destinations use size-based rotation (5 MiB x 5 files) so a
+  # long-running session can't fill the disk.
   module DebugLog
     LEVELS = {
       "DEBUG" => Logger::DEBUG,
@@ -21,39 +41,139 @@ module Tempest
       "FATAL" => Logger::FATAL,
     }.freeze
 
+    DEFAULT_ROTATION_COUNT = 5
+    DEFAULT_ROTATION_SIZE = 5 * 1024 * 1024
+
     module_function
 
-    def from_env(env)
-      raw = env["TEMPEST_DEBUG_LOG"]
-      if raw.nil? || raw.empty?
-        return build_null_logger
+    def build(env:, debug: false)
+      loggers = []
+
+      legacy = env["TEMPEST_DEBUG_LOG"]
+      if legacy && !legacy.empty?
+        loggers << build_file_logger(legacy, level: resolve_level(env["TEMPEST_DEBUG_LOG_LEVEL"]) || Logger::DEBUG)
       end
 
-      path = File.expand_path(raw)
-      FileUtils.mkdir_p(File.dirname(path))
+      unless env["TEMPEST_NO_LOG"] == "1"
+        dir = log_dir(env)
+        loggers << build_file_logger(File.join(dir, "info.log"), level: Logger::INFO)
+        loggers << build_file_logger(File.join(dir, "debug.log"), level: Logger::DEBUG) if debug
+      end
 
-      logger = Logger.new(path, "daily")
-      logger.level = resolve_level(env["TEMPEST_DEBUG_LOG_LEVEL"]) || Logger::INFO
-      logger.formatter = formatter
-      logger
+      Channel.new(loggers: loggers)
     end
 
-    def build_null_logger
-      logger = Logger.new(IO::NULL)
-      logger.level = Logger::FATAL
-      logger
+    def null_channel
+      Channel.new(loggers: [])
     end
 
     def formatter
       proc do |severity, time, progname, msg|
-        tag = progname && !progname.to_s.empty? ? "[#{progname}] " : ""
-        "#{time.iso8601} #{severity.ljust(5)} #{tag}#{msg}\n"
+        parts = []
+        parts << "level=#{severity.downcase}"
+        parts << "module=#{progname}" if progname && !progname.to_s.empty?
+        parts << msg if msg && !msg.to_s.empty?
+        "#{time.iso8601} #{parts.join(' ')}\n"
       end
     end
 
     def resolve_level(value)
       return nil if value.nil? || value.empty?
       LEVELS[value.to_s.upcase]
+    end
+
+    def log_dir(env)
+      override = env["TEMPEST_LOG_DIR"]
+      return override if override && !override.empty?
+
+      xdg = env["XDG_STATE_HOME"]
+      base = if xdg && !xdg.empty?
+        xdg
+      else
+        File.join(env["HOME"] || Dir.home, ".local", "state")
+      end
+      File.join(base, "tempest")
+    end
+
+    def build_file_logger(path, level:)
+      path = File.expand_path(path)
+      FileUtils.mkdir_p(File.dirname(path))
+      logger = Logger.new(path, DEFAULT_ROTATION_COUNT, DEFAULT_ROTATION_SIZE)
+      logger.level = level
+      logger.formatter = formatter
+      logger
+    end
+
+    def encode_value(value)
+      case value
+      when nil
+        "nil"
+      when true, false, Integer, Float, Symbol
+        value.to_s
+      when Time
+        value.iso8601
+      else
+        s = value.to_s
+        if s.empty?
+          '""'
+        elsif s.match?(/[\s"=]/)
+          '"' + s.gsub('\\', '\\\\\\\\').gsub('"', '\\"') + '"'
+        else
+          s
+        end
+      end
+    end
+
+    class Channel
+      attr_reader :loggers
+
+      def initialize(loggers:)
+        @loggers = Array(loggers)
+      end
+
+      def info(mod, event:, **fields)
+        emit(Logger::INFO, mod, event, fields)
+      end
+
+      def debug(mod, event:, **fields)
+        emit(Logger::DEBUG, mod, event, fields)
+      end
+
+      def warn(mod, event:, **fields)
+        emit(Logger::WARN, mod, event, fields)
+      end
+
+      def error(mod, event:, **fields)
+        emit(Logger::ERROR, mod, event, fields)
+      end
+
+      def close
+        @loggers.each do |logger|
+          begin
+            logger.close
+          rescue StandardError
+            # Best-effort: a half-built or already-closed logger should not
+            # take down shutdown.
+          end
+        end
+      end
+
+      private
+
+      def emit(level, mod, event, fields)
+        return if @loggers.empty?
+        msg = format_body(event, fields)
+        @loggers.each { |logger| logger.add(level, msg, mod) }
+      end
+
+      def format_body(event, fields)
+        parts = []
+        parts << "event=#{Tempest::DebugLog.encode_value(event)}" if event
+        fields.each do |k, v|
+          parts << "#{k}=#{Tempest::DebugLog.encode_value(v)}"
+        end
+        parts.join(" ")
+      end
     end
   end
 end

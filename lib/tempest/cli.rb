@@ -98,8 +98,8 @@ module Tempest
       Tempest::Commands::Tui.cursor_store(env)
     end
 
-    def build_debug_logger(env)
-      Tempest::Commands::Tui.build_debug_logger(env)
+    def build_debug_logger(env, argv: [])
+      Tempest::Commands::Tui.build_debug_logger(env, argv: argv)
     end
 
     def watchdog_options(env)

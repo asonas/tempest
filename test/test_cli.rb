@@ -381,22 +381,50 @@ class TestCLI < Minitest::Test
     refute opener.call("https://example.com")
   end
 
-  def test_build_debug_logger_returns_null_logger_without_env
-    logger = Tempest::CLI.build_debug_logger({})
-    # No file path → no observable output, but the method must return a logger.
-    refute_nil logger
-    logger.info("tag") { "ignored" }
+  def test_build_debug_logger_returns_empty_channel_when_logging_disabled
+    channel = Tempest::CLI.build_debug_logger({ "TEMPEST_NO_LOG" => "1" })
+    refute_nil channel
+    assert_empty channel.loggers
+    # Should accept structured calls without raising.
+    channel.info("stream", event: "noop")
   end
 
-  def test_build_debug_logger_writes_to_path_when_env_set
+  def test_build_debug_logger_writes_to_legacy_single_file_path_when_env_set
     Dir.mktmpdir do |dir|
       path = File.join(dir, "tempest-debug.log")
-      logger = Tempest::CLI.build_debug_logger({ "TEMPEST_DEBUG_LOG" => path })
-      logger.info("stream") { "CLI wired the logger" }
-      logger.close if logger.respond_to?(:close)
+      channel = Tempest::CLI.build_debug_logger({
+        "TEMPEST_DEBUG_LOG" => path,
+        "TEMPEST_NO_LOG" => "1",
+      })
+      channel.info("stream", event: "wired", source: "cli")
+      channel.close
 
       assert File.exist?(path)
-      assert_match(/CLI wired the logger/, File.read(path))
+      assert_match(/event=wired/, File.read(path))
+    end
+  end
+
+  def test_build_debug_logger_enables_debug_log_when_flag_present
+    Dir.mktmpdir do |dir|
+      channel = Tempest::CLI.build_debug_logger({ "TEMPEST_LOG_DIR" => dir }, argv: ["--debug"])
+      channel.info("stream", event: "wired")
+      channel.debug("stream", event: "cursor_save", cursor: 1)
+      channel.close
+
+      assert File.exist?(File.join(dir, "info.log"))
+      assert File.exist?(File.join(dir, "debug.log"))
+      assert_match(/event=cursor_save/, File.read(File.join(dir, "debug.log")))
+    end
+  end
+
+  def test_build_debug_logger_omits_debug_log_without_flag
+    Dir.mktmpdir do |dir|
+      channel = Tempest::CLI.build_debug_logger({ "TEMPEST_LOG_DIR" => dir })
+      channel.info("stream", event: "wired")
+      channel.close
+
+      assert File.exist?(File.join(dir, "info.log"))
+      refute File.exist?(File.join(dir, "debug.log"))
     end
   end
 

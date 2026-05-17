@@ -31,7 +31,7 @@ module Tempest
         @interval_seconds = interval_seconds
         @clock = clock
         @sleeper = sleeper
-        @logger = logger || Tempest::DebugLog.build_null_logger
+        @logger = logger || Tempest::DebugLog.null_channel
         @thread = nil
         @mutex = Mutex.new
         @stopping = false
@@ -70,21 +70,44 @@ module Tempest
 
       def tick
         last = @stream_manager.last_event_at
-        return unless @stream_manager.running?
+        running = @stream_manager.running?
+        @logger.debug(
+          "watchdog",
+          event: "tick",
+          running: running,
+          last_event_at: last,
+          elapsed_seconds: last ? (@clock.call - last).round(1) : nil,
+          threshold_seconds: @threshold_seconds,
+        )
+        return unless running
         return if last.nil?
 
         elapsed = @clock.call - last
         return unless elapsed > @threshold_seconds
 
-        @logger.warn("watchdog") do
-          "stalled stream elapsed_seconds=#{elapsed.round(1)} threshold=#{@threshold_seconds} — forcing reconnect"
-        end
+        @logger.warn(
+          "watchdog",
+          event: "stalled_detected",
+          elapsed_seconds: elapsed.round(1),
+          threshold_seconds: @threshold_seconds,
+          last_event_at: last,
+        )
+        @logger.warn(
+          "watchdog",
+          event: "force_reconnect_requested",
+          elapsed_seconds: elapsed.round(1),
+        )
         @stream_manager.force_reconnect
       rescue StandardError => e
         # Never let a bad clock, logger, or stream_manager bug kill the thread.
         # Best-effort log; if logger also raises, swallow.
         begin
-          @logger.error("watchdog") { "tick error=#{e.class}: #{e.message}" }
+          @logger.error(
+            "watchdog",
+            event: "tick_error",
+            error_class: e.class.name,
+            error_message: e.message,
+          )
         rescue StandardError
         end
       end

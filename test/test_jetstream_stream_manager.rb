@@ -1,5 +1,6 @@
 require_relative "test_helper"
 require "logger"
+require "tempest/debug_log"
 require "tempest/jetstream/stream_manager"
 require "tempest/jetstream/client"
 
@@ -756,9 +757,9 @@ class TestJetstreamStreamManager < Minitest::Test
     manager.start { |_| }
     manager.stop
 
-    # Should also accept an explicit logger without raising.
-    logger = Logger.new(IO::NULL)
-    manager2 = Tempest::Jetstream::StreamManager.new(client: client, logger: logger)
+    # Should also accept an explicit channel without raising.
+    channel = Tempest::DebugLog.null_channel
+    manager2 = Tempest::Jetstream::StreamManager.new(client: client, logger: channel)
     manager2.start { |_| }
     manager2.stop
   end

@@ -29,7 +29,8 @@ module Tempest
                store: nil)
         Tempest::REPL::Formatter.color = stdout.respond_to?(:tty?) && stdout.tty? && env["NO_COLOR"].to_s.empty?
 
-        debug_logger = build_debug_logger(env)
+        debug_logger = build_debug_logger(env, argv: argv)
+        announce_debug_logger(debug_logger, stderr)
 
         store ||= Tempest::SessionStore.new(path: Tempest::SessionStore.default_path(env))
         session = sign_in(env, stdout, stdin, session_factory, store: store)
@@ -184,12 +185,29 @@ module Tempest
         Tempest::CursorStore.new(path: Tempest::CursorStore.default_path(env))
       end
 
-      # Returns a Logger configured from TEMPEST_DEBUG_LOG (path) and
-      # TEMPEST_DEBUG_LOG_LEVEL. When TEMPEST_DEBUG_LOG is unset, the returned
-      # logger writes to IO::NULL at FATAL level so call sites can log
-      # unconditionally without producing files or output.
-      def build_debug_logger(env)
-        Tempest::DebugLog.from_env(env)
+      # Returns a Tempest::DebugLog::Channel. info.log is always enabled
+      # (suppress with TEMPEST_NO_LOG=1). debug.log is enabled when --debug is
+      # passed on the command line or TEMPEST_DEBUG=1 is set in the
+      # environment. The legacy TEMPEST_DEBUG_LOG=<path> env var still routes
+      # everything to a single file regardless of the other settings.
+      def build_debug_logger(env, argv: [])
+        Tempest::DebugLog.build(env: env, debug: debug_flag?(argv: argv, env: env))
+      end
+
+      def debug_flag?(argv:, env:)
+        return true if argv.include?("--debug")
+        env["TEMPEST_DEBUG"] == "1"
+      end
+
+      # Print a one-line note on stderr so the user knows where to look for
+      # the log files. Silent when logging is disabled.
+      def announce_debug_logger(channel, stderr)
+        paths = channel.loggers.map { |l|
+          dev = l.instance_variable_get(:@logdev)
+          dev && dev.filename
+        }.compact
+        return if paths.empty?
+        stderr.puts "[tempest] debug log: #{paths.join(', ')}"
       end
 
       # Parses TEMPEST_WATCHDOG_THRESHOLD / TEMPEST_WATCHDOG_INTERVAL into the
@@ -286,6 +304,11 @@ module Tempest
             --feed=MODE         Choose what the live feed subscribes to:
                                   home  (default) Your follows + your own posts
                                   self  Only your own posts (legacy echo mode)
+            --debug             Also write a verbose debug.log alongside the
+                                always-on info.log. Both files live under
+                                $XDG_STATE_HOME/tempest (default
+                                ~/.local/state/tempest) and use size-based
+                                rotation (5 MiB x 5 files).
 
           Environment (required only when no cached session is available):
             TEMPEST_IDENTIFIER     Your handle (e.g. asonas.bsky.social)
@@ -306,13 +329,17 @@ module Tempest
                                    $XDG_CONFIG_HOME/tempest/cursor.json). Holds the last-seen
                                    time_us so a restart can replay missed events.
             TEMPEST_FEED           "home" (default) or "self"; equivalent to --feed.
-            TEMPEST_DEBUG_LOG      Path to a debug log file. When set, the live-stream
-                                   component writes timestamped state transitions to this
-                                   file (rotated daily). Unset by default — no file is
-                                   created and no output is produced.
+            TEMPEST_DEBUG          Set to 1 to behave as if --debug was passed.
+            TEMPEST_LOG_DIR        Override the directory holding info.log and debug.log.
+                                   Default: $XDG_STATE_HOME/tempest or
+                                   ~/.local/state/tempest.
+            TEMPEST_NO_LOG         Set to 1 to disable info.log/debug.log entirely.
+            TEMPEST_DEBUG_LOG      Legacy: path to a single combined log file. When set,
+                                   every log line (DEBUG and above) is written to this
+                                   path in addition to the regular info.log/debug.log.
             TEMPEST_DEBUG_LOG_LEVEL
-                                   DEBUG | INFO (default) | WARN. Overrides the log
-                                   verbosity when TEMPEST_DEBUG_LOG is enabled.
+                                   DEBUG (default) | INFO | WARN. Overrides the log
+                                   verbosity for the legacy TEMPEST_DEBUG_LOG file.
             TEMPEST_WATCHDOG_THRESHOLD
                                    Seconds without a Jetstream event before the watchdog
                                    forces a reconnect (default: 90).

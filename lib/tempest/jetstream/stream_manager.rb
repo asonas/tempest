@@ -33,7 +33,7 @@ module Tempest
         @cursor_store = cursor_store
         @cursor_save_interval = cursor_save_interval
         @filter = filter
-        @logger = logger || Tempest::DebugLog.build_null_logger
+        @logger = logger || Tempest::DebugLog.null_channel
         @thread = nil
         @mutex = Mutex.new
         @stopping = false
@@ -50,10 +50,8 @@ module Tempest
       end
 
       def stop
-        @logger.info("stream") do
-          live = @mutex.synchronize { @cursor_state[:live] }
-          "stopping final_cursor=#{live.inspect}"
-        end
+        live = @mutex.synchronize { @cursor_state[:live] }
+        @logger.info("stream", event: "stopping", final_cursor: live)
         @mutex.synchronize { @stopping = true }
         thread = @mutex.synchronize do
           t = @thread
@@ -84,7 +82,7 @@ module Tempest
       def force_reconnect
         thread = @mutex.synchronize { @thread }
         return unless thread&.alive?
-        @logger.warn("stream") { "force_reconnect requested" }
+        @logger.warn("stream", event: "force_reconnect_requested")
         begin
           thread.raise(Stalled.new("forced reconnect"))
         rescue ThreadError
@@ -98,17 +96,19 @@ module Tempest
         Thread.current.report_on_exception = false
         cursor, startup_gap_since = load_initial_cursor
         if startup_gap_since
-          @logger.warn("stream") { "startup_stale stale_since=#{startup_gap_since.iso8601}" }
+          @logger.warn("stream", event: "startup_stale", stale_since: startup_gap_since)
           on_event.call(StreamStatus.new(state: :gapped, since: startup_gap_since))
         end
         last_saved_cursor = cursor
         last_save_at = nil
         attempt = 0
 
-        @logger.info("stream") do
-          age = cursor ? cursor_age_seconds(cursor) : nil
-          "worker start cursor=#{cursor.inspect} cursor_age_seconds=#{age.inspect}"
-        end
+        @logger.info(
+          "stream",
+          event: "worker_start",
+          cursor: cursor,
+          cursor_age_seconds: cursor ? cursor_age_seconds(cursor) : nil,
+        )
 
         until stopping?
           # Detect a long offline gap from the cursor's age rather than from
@@ -123,7 +123,12 @@ module Tempest
             cursor_age = @clock.call.to_f - (cursor / 1_000_000.0)
             if cursor_age > CURSOR_WINDOW_SECONDS
               since = Time.at(cursor / 1_000_000.0)
-              @logger.warn("stream") { "gapped cursor_age_seconds=#{cursor_age.round(1)} since=#{since.iso8601}" }
+              @logger.warn(
+                "stream",
+                event: "gapped",
+                cursor_age_seconds: cursor_age.round(1),
+                since: since,
+              )
               on_event.call(StreamStatus.new(state: :gapped, since: since))
               cursor = nil
             end
@@ -131,13 +136,19 @@ module Tempest
 
           if attempt > 0
             delay = @backoff[[attempt - 1, @backoff.length - 1].min]
-            @logger.info("stream") { "reconnecting attempt=#{attempt} cursor=#{cursor.inspect} backoff_just_slept=#{delay}" }
+            @logger.info(
+              "stream",
+              event: "reconnect_attempt",
+              attempt: attempt,
+              cursor: cursor,
+              backoff_just_slept_seconds: delay,
+            )
             on_event.call(StreamStatus.new(state: :reconnecting))
           end
 
           error = nil
           saw_event = false
-          @logger.info("stream") { "subscribe cursor=#{cursor.inspect}" }
+          @logger.info("stream", event: "subscribe", cursor: cursor, attempt: attempt)
           begin
             @client.each_event(cursor: cursor) do |event|
               now = @clock.call
@@ -154,7 +165,7 @@ module Tempest
                 if @cursor_store && cursor != last_saved_cursor
                   if last_save_at.nil? || (now - last_save_at) >= @cursor_save_interval
                     @cursor_store.save(time_us: cursor, at: now)
-                    @logger.debug("stream") { "cursor save time_us=#{cursor}" }
+                    @logger.debug("stream", event: "cursor_save", cursor: cursor)
                     last_saved_cursor = cursor
                     last_save_at = now
                     @mutex.synchronize { @cursor_state[:saved] = cursor }
@@ -164,6 +175,7 @@ module Tempest
               next if @filter && !@filter.call(event)
 
               if attempt > 0 && !saw_event
+                @logger.info("stream", event: "live_resumed", attempt: attempt, cursor: cursor)
                 on_event.call(StreamStatus.new(state: :live))
               end
               saw_event = true
@@ -171,11 +183,25 @@ module Tempest
             end
           rescue Stalled => e
             error = e
-            @logger.warn("stream") { "stalled — forced reconnect cursor=#{cursor.inspect}" }
+            @logger.warn(
+              "stream",
+              event: "disconnected",
+              reason: "stalled",
+              cursor: cursor,
+              error_class: e.class.name,
+              error_message: e.message,
+            )
             on_event.call(StreamError.new(e))
           rescue => e
             error = e
-            @logger.warn("stream") { "disconnect error=#{e.class}: #{e.message}" }
+            @logger.warn(
+              "stream",
+              event: "disconnected",
+              reason: "error",
+              cursor: cursor,
+              error_class: e.class.name,
+              error_message: e.message,
+            )
             on_event.call(StreamError.new(e))
           end
 
@@ -186,7 +212,7 @@ module Tempest
           if @cursor_store && cursor && cursor != last_saved_cursor
             now = @clock.call
             @cursor_store.save(time_us: cursor, at: now)
-            @logger.debug("stream") { "cursor save (disconnect) time_us=#{cursor}" }
+            @logger.debug("stream", event: "cursor_save_on_disconnect", cursor: cursor)
             last_saved_cursor = cursor
             last_save_at = now
             @mutex.synchronize { @cursor_state[:saved] = cursor }
@@ -205,7 +231,7 @@ module Tempest
           attempt += 1
         end
 
-        @logger.info("stream") { "worker exit final_cursor=#{cursor.inspect}" }
+        @logger.info("stream", event: "worker_exit", final_cursor: cursor)
       end
 
       def cursor_age_seconds(cursor)
