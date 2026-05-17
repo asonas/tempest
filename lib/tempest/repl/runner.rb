@@ -42,6 +42,11 @@ module Tempest
         @timeline_store = timeline_store
         @registry = registry
         @opener = opener
+        # URIs already printed via bootstrap_timeline or backfill_timeline.
+        # Jetstream's cursor-replay can re-emit those same posts on startup
+        # (the persisted cursor is older than the getTimeline window), so the
+        # stream handler skips post events whose URI is in this set.
+        @displayed_post_uris = Set.new
       end
 
       def bootstrap_timeline
@@ -49,7 +54,7 @@ module Tempest
 
         cached = @timeline_store.load
         cached_posts = cached ? Array(cached[:posts]) : []
-        cached_posts.each { |post| @output.puts Formatter.post_line(post, registry: @registry) }
+        cached_posts.each { |post| print_post(post) }
 
         cached_uris = cached_posts.map(&:uri).to_set
         begin
@@ -60,7 +65,7 @@ module Tempest
         end
 
         new_posts = fetched.reject { |post| cached_uris.include?(post.uri) }
-        new_posts.reverse_each { |post| @output.puts Formatter.post_line(post, registry: @registry) }
+        new_posts.reverse_each { |post| print_post(post) }
 
         merged = cached_posts + new_posts.reverse
         @timeline_store.save(posts: merged)
@@ -202,16 +207,26 @@ module Tempest
         else
           return unless event.respond_to?(:create?) && event.create?
           return unless event.post? || event.like? || event.repost?
+          return if event.post? && @displayed_post_uris.include?(event.at_uri)
 
           @stream_output.puts Formatter.event_line(event, registry: @registry, resolver: @handle_resolver)
+          @displayed_post_uris << event.at_uri if event.post?
         end
       end
 
       def backfill_timeline
         posts = Timeline.fetch(@client)
-        posts.reverse_each { |post| @stream_output.puts Formatter.post_line(post, registry: @registry) }
+        posts.reverse_each do |post|
+          next if @displayed_post_uris.include?(post.uri)
+          print_post(post, output: @stream_output)
+        end
       rescue Tempest::Error => e
         @stream_output.puts "-- timeline backfill failed: #{e.message}"
+      end
+
+      def print_post(post, output: @output)
+        output.puts Formatter.post_line(post, registry: @registry)
+        @displayed_post_uris << post.uri
       end
     end
   end

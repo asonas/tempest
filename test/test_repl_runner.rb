@@ -583,6 +583,84 @@ class TestREPLRunner < Minitest::Test
     assert_match(/^-- live/, out)
   end
 
+  # Bootstrap fetches getTimeline and prints the posts; if the saved Jetstream
+  # cursor is older than those posts, the stream replays the same URIs. The
+  # runner must dedupe stream events against what bootstrap already printed.
+  def test_stream_post_event_is_deduped_against_bootstrap_timeline
+    require "tempest/jetstream/decoder"
+    store = FakeTimelineStore.new(stored: nil)
+    client = MultiPostXRPCClient.new
+    stream = FakeStreamManager.new
+
+    steps = [
+      { line: ":stream on" },
+      {
+        emit: -> {
+          # Same URI as the "newer" post printed during bootstrap
+          # (at://did:plc:a/app.bsky.feed.post/z).
+          stream.emit(Tempest::Jetstream::Event.new(
+            kind: :commit, did: "did:plc:a", time_us: 999,
+            collection: "app.bsky.feed.post", operation: :create,
+            rkey: "z", cid: "bafyz", text: "newer", created_at: "2026-05-15T02:00:00.000Z",
+          ))
+        },
+        line: ":quit",
+      },
+    ]
+
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: client,
+      input: EmittingReader.new(steps),
+      output: @output,
+      stream_manager: stream,
+      timeline_store: store,
+    )
+    runner.bootstrap_timeline
+    runner.run
+
+    out = @output.string
+    # The "newer" post must appear exactly once (from bootstrap), not again
+    # from the replayed stream event.
+    assert_equal 1, out.scan("newer").length
+  end
+
+  # A stream event whose URI was not printed during bootstrap should still
+  # be rendered normally.
+  def test_stream_post_event_not_in_bootstrap_is_still_printed
+    require "tempest/jetstream/decoder"
+    store = FakeTimelineStore.new(stored: nil)
+    client = MultiPostXRPCClient.new
+    stream = FakeStreamManager.new
+
+    steps = [
+      { line: ":stream on" },
+      {
+        emit: -> {
+          stream.emit(Tempest::Jetstream::Event.new(
+            kind: :commit, did: "did:plc:b", time_us: 1000,
+            collection: "app.bsky.feed.post", operation: :create,
+            rkey: "fresh", cid: "bafyfresh", text: "brand new", created_at: "2026-05-15T03:00:00.000Z",
+          ))
+        },
+        line: ":quit",
+      },
+    ]
+
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: client,
+      input: EmittingReader.new(steps),
+      output: @output,
+      stream_manager: stream,
+      timeline_store: store,
+    )
+    runner.bootstrap_timeline
+    runner.run
+
+    assert_match(/brand new/, @output.string)
+  end
+
   def test_reply_to_unknown_id_prints_unknown_id_and_does_not_post
     out = run_with(["$AA hello", ":quit"])
     assert_match(/unknown id: \$AA/, out)
