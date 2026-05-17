@@ -82,6 +82,23 @@ class TestREPLRegistry < Minitest::Test
     assert_equal first, @registry.assign_url("https://example.com")
   end
 
+  def test_var_for_uri_returns_var_previously_assigned_for_same_uri
+    post = make_post("at://x/1")
+    var = @registry.assign_post(post)
+    assert_equal var, @registry.var_for_uri("at://x/1")
+  end
+
+  def test_var_for_uri_returns_nil_for_unknown_uri
+    @registry.assign_post(make_post("at://x/1"))
+    assert_nil @registry.var_for_uri("at://x/unknown")
+  end
+
+  def test_var_for_uri_finds_event_assigned_by_at_uri
+    event = make_event("did:plc:x", "rkey-1")
+    var = @registry.assign_post(event)
+    assert_equal var, @registry.var_for_uri("at://did:plc:x/app.bsky.feed.post/rkey-1")
+  end
+
   def test_recycled_url_slot_returns_new_tenant
     26.times { |i| @registry.assign_url("https://example.com/#{i}") }
     var = @registry.assign_url("https://example.com/new")

@@ -402,6 +402,81 @@ class TestREPLFormatter < Minitest::Test
                  registry.find_url("$LA")
   end
 
+  def test_event_line_prefixes_body_with_reply_var_when_parent_in_registry
+    parent_post = Tempest::Post.new(
+      uri: "at://did:plc:parent/app.bsky.feed.post/parkey", cid: "bafy",
+      handle: "bob.bsky.social", display_name: nil, text: "first", created_at: nil,
+    )
+    registry = Tempest::REPL::Registry.new
+    registry.assign_post(parent_post) # gets $AA
+
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:replier", time_us: 2,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "rk", cid: "bafy", text: "thanks", created_at: nil,
+      reply_parent_uri: "at://did:plc:parent/app.bsky.feed.post/parkey",
+    )
+
+    line = Tempest::REPL::Formatter.event_line(event, registry: registry)
+    assert_equal "[$AB] <did:plc:replier>: ↪$AA thanks", line
+  end
+
+  def test_event_line_prefixes_body_with_bare_arrow_when_parent_unknown
+    registry = Tempest::REPL::Registry.new
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:replier", time_us: 2,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "rk", cid: "bafy", text: "thanks", created_at: nil,
+      reply_parent_uri: "at://did:plc:other/app.bsky.feed.post/unseen",
+    )
+
+    line = Tempest::REPL::Formatter.event_line(event, registry: registry)
+    assert_equal "[$AA] <did:plc:replier>: ↪ thanks", line
+  end
+
+  def test_event_line_does_not_add_reply_prefix_for_non_reply_post
+    registry = Tempest::REPL::Registry.new
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:replier", time_us: 2,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "rk", cid: "bafy", text: "hi", created_at: nil,
+    )
+
+    line = Tempest::REPL::Formatter.event_line(event, registry: registry)
+    assert_equal "[$AA] <did:plc:replier>: hi", line
+  end
+
+  def test_post_line_prefixes_body_with_reply_var_when_parent_in_registry
+    parent_post = Tempest::Post.new(
+      uri: "at://did:plc:parent/app.bsky.feed.post/parkey", cid: "bafy",
+      handle: "bob.bsky.social", display_name: nil, text: "first", created_at: nil,
+    )
+    registry = Tempest::REPL::Registry.new
+    registry.assign_post(parent_post)
+
+    reply = Tempest::Post.new(
+      uri: "at://did:plc:replier/app.bsky.feed.post/rk", cid: "bafy",
+      handle: "alice.bsky.social", display_name: nil,
+      text: "thanks", created_at: nil,
+      reply_parent_uri: "at://did:plc:parent/app.bsky.feed.post/parkey",
+    )
+
+    line = Tempest::REPL::Formatter.post_line(reply, registry: registry)
+    assert_equal "[$AB] @alice.bsky.social: ↪$AA thanks", line
+  end
+
+  def test_post_line_without_registry_omits_reply_prefix
+    reply = Tempest::Post.new(
+      uri: "at://x/1", cid: "bafy",
+      handle: "alice.bsky.social", display_name: nil,
+      text: "thanks", created_at: nil,
+      reply_parent_uri: "at://did:plc:parent/app.bsky.feed.post/parkey",
+    )
+
+    line = Tempest::REPL::Formatter.post_line(reply)
+    assert_equal "@alice.bsky.social: thanks", line
+  end
+
   def test_event_line_with_registry_does_not_assign_id_for_like
     event = Tempest::Jetstream::Event.new(
       kind: :commit, did: "did:plc:actor", time_us: 1,

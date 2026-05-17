@@ -151,3 +151,36 @@ class TestPostCreate < Minitest::Test
     refute body[:record].key?("reply")
   end
 end
+
+class TestPostFromFeedView < Minitest::Test
+  def test_extracts_reply_parent_uri_from_record
+    raw = {
+      "uri" => "at://did:plc:replier/app.bsky.feed.post/rk",
+      "cid" => "bafy",
+      "author" => { "handle" => "alice.bsky.social", "displayName" => "Alice" },
+      "record" => {
+        "$type" => "app.bsky.feed.post",
+        "text" => "thanks!",
+        "createdAt" => "2026-05-15T00:00:00.000Z",
+        "reply" => {
+          "root"   => { "uri" => "at://did:plc:root/app.bsky.feed.post/rootkey",   "cid" => "bafyroot" },
+          "parent" => { "uri" => "at://did:plc:parent/app.bsky.feed.post/parkey", "cid" => "bafyparent" },
+        },
+      },
+    }
+
+    post = Tempest::Post.from_feed_view(raw)
+    assert_equal "at://did:plc:parent/app.bsky.feed.post/parkey", post.reply_parent_uri
+  end
+
+  def test_top_level_post_has_nil_reply_parent_uri
+    raw = {
+      "uri" => "at://did:plc:x/app.bsky.feed.post/r",
+      "cid" => "bafy",
+      "author" => { "handle" => "bob.bsky.social" },
+      "record" => { "$type" => "app.bsky.feed.post", "text" => "top", "createdAt" => "2026-05-15T00:00:00.000Z" },
+    }
+    post = Tempest::Post.from_feed_view(raw)
+    assert_nil post.reply_parent_uri
+  end
+end

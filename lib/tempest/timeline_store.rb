@@ -68,6 +68,7 @@ module Tempest
         "text" => post.text,
         "created_at" => post.created_at,
         "facets" => post.facets.map { |f| serialize_facet(f) },
+        "reply_parent_uri" => post.reply_parent_uri,
       }
     end
 
@@ -80,6 +81,7 @@ module Tempest
         text: hash["text"],
         created_at: hash["created_at"],
         facets: deserialize_facets(hash["facets"]),
+        reply_parent_uri: hash["reply_parent_uri"],
       )
     end
 

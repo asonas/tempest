@@ -33,6 +33,16 @@ module Tempest
         @urls[var]
       end
 
+      # Reverse lookup: returns the var currently mapped to the given
+      # post URI, or nil if the URI has never been assigned or its slot
+      # has been recycled to a different post.
+      def var_for_uri(uri)
+        @posts.each do |var, post|
+          return var if post_key(post) == uri
+        end
+        nil
+      end
+
       private
 
       def post_key(post)

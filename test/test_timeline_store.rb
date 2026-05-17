@@ -45,6 +45,25 @@ class TestTimelineStore < Minitest::Test
     assert_equal posts, loaded[:posts]
   end
 
+  def test_save_and_load_preserves_reply_parent_uri
+    store = Tempest::TimelineStore.new(path: @path)
+    posts = [
+      Tempest::Post.new(
+        uri: "at://did:plc:replier/app.bsky.feed.post/rk",
+        cid: "bafy",
+        handle: "alice.example",
+        display_name: nil,
+        text: "thanks",
+        created_at: "2026-05-15T09:00:00.000Z",
+        reply_parent_uri: "at://did:plc:parent/app.bsky.feed.post/pk",
+      ),
+    ]
+
+    store.save(posts: posts, at: Time.utc(2026, 5, 15))
+    loaded = store.load
+    assert_equal "at://did:plc:parent/app.bsky.feed.post/pk", loaded[:posts].first.reply_parent_uri
+  end
+
   def test_load_returns_nil_when_file_missing
     store = Tempest::TimelineStore.new(path: @path)
     assert_nil store.load

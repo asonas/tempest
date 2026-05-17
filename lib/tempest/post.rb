@@ -2,8 +2,9 @@ require_relative "../tempest"
 require_relative "facet"
 
 module Tempest
-  Post = Data.define(:uri, :cid, :handle, :display_name, :text, :created_at, :facets) do
-    def initialize(uri:, cid:, handle:, display_name:, text:, created_at:, facets: [])
+  Post = Data.define(:uri, :cid, :handle, :display_name, :text, :created_at, :facets, :reply_parent_uri) do
+    def initialize(uri:, cid:, handle:, display_name:, text:, created_at:,
+                   facets: [], reply_parent_uri: nil)
       super
     end
 
@@ -11,6 +12,8 @@ module Tempest
       post = post || {}
       author = post["author"] || {}
       record = post["record"] || {}
+      reply = record["reply"]
+      reply_parent = reply.is_a?(Hash) ? reply["parent"] : nil
       new(
         uri: post["uri"],
         cid: post["cid"],
@@ -19,6 +22,7 @@ module Tempest
         text: record["text"],
         created_at: record["createdAt"],
         facets: Facet.parse(record["facets"]),
+        reply_parent_uri: reply_parent.is_a?(Hash) ? reply_parent["uri"] : nil,
       )
     end
 

@@ -36,6 +36,7 @@ module Tempest
         facets = post.respond_to?(:facets) ? post.facets : nil
         body = annotate_urls(squeeze(post.text), registry, facets: facets)
         body = decorate_body(body)
+        body = prepend_reply_marker(body, reply_parent_uri_of(post), registry)
         compose(var, format_time(post.created_at), post.handle, nil, body)
       end
 
@@ -84,6 +85,7 @@ module Tempest
           facets = event.respond_to?(:facets) ? event.facets : nil
           body = annotate_urls(squeeze(event.text), registry, facets: facets)
           body = decorate_body(body)
+          body = prepend_reply_marker(body, reply_parent_uri_of(event), registry)
           var = registry&.assign_post(event)
         end
         compose(var, format_time(event.created_at), handle, event.did, body)
@@ -102,6 +104,19 @@ module Tempest
         return nil if subject_uri.nil? || subject_uri.empty?
         match = subject_uri.match(%r{\Aat://([^/]+)/})
         match && match[1]
+      end
+
+      def reply_parent_uri_of(record)
+        record.respond_to?(:reply_parent_uri) ? record.reply_parent_uri : nil
+      end
+
+      def prepend_reply_marker(body, reply_parent_uri, registry)
+        return body if reply_parent_uri.nil? || reply_parent_uri.empty?
+        return body unless registry
+
+        parent_var = registry.var_for_uri(reply_parent_uri)
+        marker = parent_var ? "↪#{parent_var} " : "↪ "
+        "#{marker}#{body}"
       end
 
       def annotate_urls(text, registry, facets: nil)

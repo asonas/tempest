@@ -245,6 +245,48 @@ class TestJetstreamDecoder < Minitest::Test
     assert_equal [], event.facets
   end
 
+  def test_decode_extracts_reply_parent_uri_for_post_reply
+    payload = {
+      did: "did:plc:replier",
+      time_us: 8,
+      kind: "commit",
+      commit: {
+        operation: "create",
+        collection: "app.bsky.feed.post",
+        rkey: "rk",
+        record: {
+          "$type" => "app.bsky.feed.post",
+          text: "thanks",
+          createdAt: "2026-01-01T00:00:00Z",
+          reply: {
+            root:   { uri: "at://did:plc:root/app.bsky.feed.post/rootkey",   cid: "bafyroot" },
+            parent: { uri: "at://did:plc:parent/app.bsky.feed.post/parkey", cid: "bafyparent" },
+          },
+        },
+      },
+    }.to_json
+
+    event = decode(payload)
+    assert_equal "at://did:plc:parent/app.bsky.feed.post/parkey", event.reply_parent_uri
+  end
+
+  def test_decode_returns_nil_reply_parent_uri_for_top_level_post
+    payload = {
+      did: "did:plc:x",
+      time_us: 9,
+      kind: "commit",
+      commit: {
+        operation: "create",
+        collection: "app.bsky.feed.post",
+        rkey: "r",
+        record: { "$type" => "app.bsky.feed.post", text: "top", createdAt: "2026-01-01T00:00:00Z" },
+      },
+    }.to_json
+
+    event = decode(payload)
+    assert_nil event.reply_parent_uri
+  end
+
   def test_event_at_uri_concatenates_did_collection_and_rkey
     event = Tempest::Jetstream::Event.new(
       kind: :commit, did: "did:plc:x", time_us: 1,
