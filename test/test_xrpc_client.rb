@@ -36,7 +36,7 @@ class TestXRPCClient < Minitest::Test
   def test_get_refreshes_session_and_retries_once_on_401
     session = build_session
     old_access = session.access_jwt
-    new_access = fake_jwt(exp: Time.now.to_i + 3600)
+    new_access = fake_jwt(exp: Time.now.to_i + 7200)
     new_refresh = fake_jwt(exp: Time.now.to_i + 172_800)
 
     stub_request(:get, "https://bsky.social/xrpc/app.bsky.feed.getTimeline")
@@ -64,6 +64,63 @@ class TestXRPCClient < Minitest::Test
     response = client.get("app.bsky.feed.getTimeline")
 
     assert_equal({ "feed" => [{ "post" => "x" }] }, response)
+    assert_equal new_access, session.access_jwt
+  end
+
+  def test_post_refreshes_session_and_retries_once_on_400_expired_token
+    session = build_session
+    old_access = session.access_jwt
+    new_access = fake_jwt(exp: Time.now.to_i + 7200)
+    new_refresh = fake_jwt(exp: Time.now.to_i + 172_800)
+
+    body = { repo: "did:plc:abc", collection: "app.bsky.feed.post", record: { text: "hello" } }
+
+    stub_request(:post, "https://bsky.social/xrpc/com.atproto.repo.createRecord")
+      .with(
+        headers: {
+          "Authorization" => "Bearer #{old_access}",
+          "Content-Type" => "application/json",
+        },
+        body: body.to_json,
+      )
+      .to_return(
+        status: 400,
+        headers: { "Content-Type" => "application/json" },
+        body: { error: "ExpiredToken", message: "Token has expired" }.to_json,
+      )
+
+    stub_request(:post, "https://bsky.social/xrpc/com.atproto.server.refreshSession")
+      .with(headers: { "Authorization" => "Bearer #{session.refresh_jwt}" })
+      .to_return(
+        status: 200,
+        headers: { "Content-Type" => "application/json" },
+        body: {
+          accessJwt: new_access,
+          refreshJwt: new_refresh,
+          did: "did:plc:abc",
+          handle: "asonas.bsky.social",
+        }.to_json,
+      )
+
+    stub_request(:post, "https://bsky.social/xrpc/com.atproto.repo.createRecord")
+      .with(
+        headers: {
+          "Authorization" => "Bearer #{new_access}",
+          "Content-Type" => "application/json",
+        },
+        body: body.to_json,
+      )
+      .to_return(
+        status: 200,
+        headers: { "Content-Type" => "application/json" },
+        body: { uri: "at://did:plc:abc/app.bsky.feed.post/abc123", cid: "bafyabc" }.to_json,
+      )
+
+    client = Tempest::XRPCClient.new(session)
+    response = client.post("com.atproto.repo.createRecord", body: body)
+
+    assert_requested :post, "https://bsky.social/xrpc/com.atproto.server.refreshSession", times: 1
+    assert_equal "at://did:plc:abc/app.bsky.feed.post/abc123", response["uri"]
     assert_equal new_access, session.access_jwt
   end
 

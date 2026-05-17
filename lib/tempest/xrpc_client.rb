@@ -40,7 +40,7 @@ module Tempest
     def perform
       response = yield(@session.access_jwt)
 
-      if response.unauthorized?
+      if auth_expired_response?(response)
         @session.refresh!
         response = yield(@session.access_jwt)
       end
@@ -48,6 +48,14 @@ module Tempest
       raise Tempest::APIError.new(response.status, response.body) unless response.ok?
 
       response.body
+    end
+
+    def auth_expired_response?(response)
+      return true if response.unauthorized?
+      return false unless response.status == 400
+      return false unless response.body.is_a?(Hash)
+
+      response.body["error"] == "ExpiredToken"
     end
   end
 end
