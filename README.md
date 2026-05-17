@@ -55,18 +55,23 @@ The first sign-in may prompt for the email code Bluesky sends as a second factor
 |------------------|--------------------------------------------------|
 | `:timeline`      | Fetch and print the home timeline                |
 | `:stream on/off` | Toggle the Jetstream live feed                   |
+| `:open $LX`      | Open the URL with id `$LX` in the browser        |
 | `:help`          | Show in-app help                                 |
 | `:quit`          | Exit (`Ctrl-D` works too)                        |
+| `$XX <text>`     | Reply to the post with id `$XX`                  |
 
 Anything else you type is sent as a new post.
 
+Each post in the timeline is prefixed with a short `$XX` id, and URLs found inside posts get their own `$LX` ids. Use those ids with `$XX <text>` to reply or `:open $LX` to open a link.
+
 ### CLI options
 
-| Option          | Description                                |
-|-----------------|--------------------------------------------|
-| `-h`, `--help`  | Show CLI help                              |
-| `-v`, `--version` | Show version                             |
-| `--no-stream`   | Disable the auto-started Jetstream feed    |
+| Option            | Description                                                  |
+|-------------------|--------------------------------------------------------------|
+| `-h`, `--help`    | Show CLI help                                                |
+| `-v`, `--version` | Show version                                                 |
+| `--no-stream`     | Disable the auto-started Jetstream feed                      |
+| `--feed=MODE`     | `home` (default, your follows + your own posts) or `self` (only your own posts) |
 
 ### Environment variables
 
@@ -77,7 +82,11 @@ Anything else you type is sent as a new post.
 | `TEMPEST_PDS_HOST`          | Override PDS host (default `https://bsky.social`)                       |
 | `TEMPEST_AUTH_FACTOR_TOKEN` | Pre-supply an email sign-in code; usually unnecessary                   |
 | `TEMPEST_NO_STREAM`         | Set to `1` to disable the auto-started Jetstream feed                   |
+| `TEMPEST_FEED`              | `home` (default) or `self`; equivalent to `--feed`                      |
+| `TEMPEST_OPEN_CMD`          | Command used by `:open $LX` to open URLs (default `open`); URL is passed as the single argument |
 | `TEMPEST_SESSION_PATH`      | Override the session cache path                                         |
+| `TEMPEST_CURSOR_PATH`       | Override the Jetstream cursor cache path                                |
+| `TEMPEST_TIMELINE_PATH`     | Override the timeline snapshot cache path                               |
 | `NO_COLOR`                  | Disable ANSI colors when set to any non-empty value                     |
 
 ## Development
