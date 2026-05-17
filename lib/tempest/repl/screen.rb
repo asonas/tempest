@@ -37,6 +37,7 @@ module Tempest
 
       def disable
         return unless @enabled
+        @io.print "\e_Ga=d,q=2\e\\"
         @io.print "\e[r"
         @io.flush if @io.respond_to?(:flush)
         @enabled = false
@@ -130,6 +131,7 @@ module Tempest
 
       def wrap_to_cols(line)
         return [line] unless @cols && @cols.positive?
+        return [line] if line.include?("\e_G")
         return [line] if Reline::Unicode.calculate_width(line, true) <= @cols
 
         chunks, _ = Reline::Unicode.split_by_width(line, @cols)

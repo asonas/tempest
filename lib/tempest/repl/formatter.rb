@@ -190,7 +190,7 @@ module Tempest
         prefix += id_label(var) if var
         prefix += bracket(time) if time
         identity = handle ? handle_label(handle) : did_label(did)
-        identity = "#{icon} #{identity}" if icon
+        identity = "#{icon}  #{identity}" if icon
         "#{prefix}#{identity}: #{text}"
       end
 

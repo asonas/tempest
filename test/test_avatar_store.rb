@@ -125,6 +125,24 @@ class TestAvatarStore < Minitest::Test
     end
   end
 
+  def test_async_path_for_returns_disk_cached_avatar_immediately
+    Dir.mktmpdir do |dir|
+      client = FakeClient.new({})
+      fetcher = FakeFetcher.new({})
+      converter = FakeConverter.new
+      cached = File.join(dir, "did_plc_abc__cid1.png")
+      File.binwrite(cached, "PNG")
+      store = Tempest::AvatarStore.new(
+        client: client, cache_dir: dir, fetcher: fetcher, converter: converter, async: true,
+      )
+
+      assert_equal cached, store.path_for("did:plc:abc")
+      assert_empty client.calls
+      assert_empty fetcher.calls
+      assert_empty converter.calls
+    end
+  end
+
   def test_async_failure_is_negatively_cached_so_executor_does_not_retry
     Dir.mktmpdir do |dir|
       client = FakeClient.new({}) # all lookups fail

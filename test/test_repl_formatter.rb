@@ -591,9 +591,9 @@ class TestREPLFormatter < Minitest::Test
     handle_index = line.index("@alice.bsky.social")
     assert_operator icon_index, :<, handle_index,
       "icon should come before the handle in: #{line.inspect}"
-    # Exactly one space sits between the icon's trailing ESC\ and the handle's
-    # ANSI green prefix.
-    assert_match(/\e\\\s\e\[32m@alice\.bsky\.social/, line)
+    # The Kitty escape uses C=1, so the cursor does not advance after drawing
+    # the 2-column image. Reserve those cells before writing the handle.
+    assert_match(/\e\\ {2}\e\[32m@alice\.bsky\.social/, line)
   ensure
     png&.close
     png&.unlink
@@ -616,7 +616,7 @@ class TestREPLFormatter < Minitest::Test
     line = Tempest::REPL::Formatter.event_line(event, resolver: resolver, avatar_store: store)
 
     assert_includes line, "\e_G"
-    assert_match(/\e\\\s\e\[32m@alice\.bsky\.social/, line)
+    assert_match(/\e\\ {2}\e\[32m@alice\.bsky\.social/, line)
   ensure
     png&.close
     png&.unlink

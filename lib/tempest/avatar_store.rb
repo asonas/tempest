@@ -123,6 +123,11 @@ module Tempest
       cached = @mutex.synchronize { @cache[did] }
       return cached_value(cached) unless cached.nil?
 
+      if @async && (path = cached_file_for(did))
+        @mutex.synchronize { @cache[did] = path }
+        return path
+      end
+
       if @async
         enqueue_resolve(did)
         nil
@@ -139,6 +144,10 @@ module Tempest
 
     def cached_value(value)
       value.equal?(NOT_FOUND) ? nil : value
+    end
+
+    def cached_file_for(did)
+      Dir.glob(File.join(@cache_dir, "#{sanitize(did)}__*.png")).max_by { |path| File.mtime(path) }
     end
 
     def resolve_and_cache(did)

@@ -41,6 +41,17 @@ class TestREPLScreen < Minitest::Test
     refute screen.enabled?
   end
 
+  def test_disable_deletes_kitty_graphics_placements
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24)
+    screen.enable
+    io.truncate(0); io.rewind
+
+    screen.disable
+
+    assert_includes io.string, "\e_Ga=d,q=2\e\\"
+  end
+
   def test_puts_when_enabled_writes_above_prompt_via_decsc_decrc
     io = FakeTTY.new
     screen = Tempest::REPL::Screen.new(io: io, rows: 24)
@@ -124,6 +135,21 @@ class TestREPLScreen < Minitest::Test
     # the terminal scrolls the region instead of spilling onto the prompt row.
     move_clear_pairs = output.scan(/\e\[23;1H\r\e\[2K/).length
     assert_operator move_clear_pairs, :>=, 2
+  end
+
+  def test_puts_does_not_split_kitty_graphics_escape_sequences
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 40)
+    screen.enable
+    io.truncate(0); io.rewind
+
+    kitty_escape = "\e_Ga=T,f=100,r=1,c=2,C=1,m=0;#{"A" * 120}\e\\"
+    screen.puts "#{kitty_escape} @alice.bsky.social: hi"
+
+    graphics_escape = io.string[/\e_G.*?\e\\/m]
+    refute_nil graphics_escape
+    refute_includes graphics_escape, "\n",
+      "screen wrapping must not inject line breaks inside Kitty graphics escapes"
   end
 
   def test_puts_does_not_wrap_when_line_fits_in_cols
