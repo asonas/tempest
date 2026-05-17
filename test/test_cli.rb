@@ -461,3 +461,34 @@ class TestCLI < Minitest::Test
     end
   end
 end
+
+class TestCLIRouting < Minitest::Test
+  def test_unknown_subcommand_returns_64_and_writes_to_stderr
+    err = StringIO.new
+    status = Tempest::CLI.run(
+      argv: ["nope"], env: {}, stdout: StringIO.new, stderr: err,
+    )
+    assert_equal 64, status
+    assert_match(/unknown command/, err.string)
+  end
+
+  def test_explicit_tui_subcommand_reaches_tui_path
+    # Reuse the same "missing env" path the existing TUI tests exercise to
+    # prove we got into Commands::Tui without changing observable behaviour.
+    err = StringIO.new
+    status = Tempest::CLI.run(
+      argv: ["tui"], env: {}, stdout: StringIO.new, stderr: err,
+    )
+    refute_equal 0, status
+    assert_match(/TEMPEST_IDENTIFIER/, err.string)
+  end
+
+  def test_dashflag_only_argv_still_reaches_tui_path
+    err = StringIO.new
+    status = Tempest::CLI.run(
+      argv: ["--no-stream"], env: {}, stdout: StringIO.new, stderr: err,
+    )
+    refute_equal 0, status
+    assert_match(/TEMPEST_IDENTIFIER/, err.string)
+  end
+end

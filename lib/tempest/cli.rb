@@ -3,6 +3,8 @@ require_relative "commands/tui"
 
 module Tempest
   module CLI
+    SUBCOMMANDS = %w[tui post feed whoami].freeze
+
     module_function
 
     def run(argv: ARGV, env: ENV, stdout: $stdout, stderr: $stderr, stdin: $stdin,
@@ -18,10 +20,21 @@ module Tempest
         return 0
       end
 
-      Tempest::Commands::Tui.call(
-        argv: argv, env: env, stdout: stdout, stderr: stderr, stdin: stdin,
-        session_factory: session_factory, store: store,
-      )
+      head = argv.first
+      case
+      when head.nil?, head.start_with?("-"), head == "tui"
+        rest = (head == "tui") ? argv.drop(1) : argv
+        Tempest::Commands::Tui.call(
+          argv: rest, env: env, stdout: stdout, stderr: stderr, stdin: stdin,
+          session_factory: session_factory, store: store,
+        )
+      when SUBCOMMANDS.include?(head)
+        stderr.puts "subcommand not implemented yet: #{head}"
+        1
+      else
+        stderr.puts "unknown command: #{head.inspect}"
+        64
+      end
     end
 
     VALID_FEED_MODES = Tempest::Commands::Tui::VALID_FEED_MODES
