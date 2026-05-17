@@ -1,4 +1,5 @@
 require "fileutils"
+require "json"
 require "net/http"
 require "open3"
 require "tmpdir"
@@ -20,6 +21,31 @@ module Tempest
     # Sentinel for "we tried, there is no avatar" — distinct from "we haven't
     # looked yet" (nil). Mirrors the pattern in HandleResolver.
     NOT_FOUND = Object.new.freeze
+
+    # Standalone profile client used by Tempest::CLI.
+    #
+    # AvatarStore resolves DIDs on a background thread, so the client it uses
+    # must be thread-safe. We deliberately do NOT use Tempest::XRPCClient
+    # here, because the underlying Tempest::HTTP layer is built on
+    # Async::HTTP::Internet whose Fibers cannot be resumed from a thread other
+    # than the one that created them — calling it from our worker yields
+    # `FiberError: fiber called across threads`.
+    #
+    # app.bsky.actor.getProfile is served unauthenticated by
+    # public.api.bsky.app, so we don't need a session here.
+    class DefaultProfileClient
+      HOST = "https://public.api.bsky.app".freeze
+
+      def get(nsid, query: nil)
+        uri = URI("#{HOST}/xrpc/#{nsid}")
+        uri.query = URI.encode_www_form(query) if query && !query.empty?
+        res = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https") do |http|
+          http.get(uri.request_uri, "Accept" => "application/json")
+        end
+        raise Tempest::APIError.new(res.code.to_i, { "error" => res.message }) unless res.is_a?(Net::HTTPSuccess)
+        JSON.parse(res.body)
+      end
+    end
 
     def initialize(client:, cache_dir:, fetcher: nil, converter: nil, async: true, executor: nil)
       @client = client

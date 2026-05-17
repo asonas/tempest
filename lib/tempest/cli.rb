@@ -47,8 +47,13 @@ module Tempest
       handle_resolver = Tempest::HandleResolver.new(client: client)
       handle_resolver.seed(session.did, session.handle)
 
+      # NOTE: we intentionally don't pass `client` (the XRPCClient) here.
+      # XRPCClient routes through Tempest::HTTP / Async, whose Fibers cannot
+      # be resumed across threads; AvatarStore runs resolution in background
+      # workers. DefaultProfileClient is a plain Net::HTTP client that hits
+      # public.api.bsky.app unauthenticated, which is thread-safe.
       avatar_store = Tempest::AvatarStore.new(
-        client: client,
+        client: Tempest::AvatarStore::DefaultProfileClient.new,
         cache_dir: avatar_cache_dir(env),
       )
 
