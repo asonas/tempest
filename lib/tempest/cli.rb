@@ -24,6 +24,8 @@ module Tempest
       )
     end
 
+    VALID_FEED_MODES = Tempest::Commands::Tui::VALID_FEED_MODES
+
     # Forwarding delegates — keep Tempest::CLI.* callable so existing tests
     # do not need modification. All logic lives in Tempest::Commands::Tui.
 
