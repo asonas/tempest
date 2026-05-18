@@ -1153,14 +1153,6 @@ class TestREPLRunner < Minitest::Test
     assert_match(/cancelled/i, out)
   end
 
-  def test_compose_command_with_no_editor_explains
-    compose = ->(*) { [:no_editor, nil] }
-    out = run_with_compose([":compose", ":quit"], compose: compose)
-
-    assert_empty @client.post_calls
-    assert_match(/EDITOR/, out)
-  end
-
   def test_compose_command_when_editor_fails_reports_error
     compose = ->(*) { [:editor_failed, nil] }
     out = run_with_compose([":compose", ":quit"], compose: compose)

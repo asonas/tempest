@@ -164,8 +164,6 @@ module Tempest
             handle_post(body)
           when :empty
             @output.puts "compose cancelled (empty body)"
-          when :no_editor
-            @output.puts "compose requires $EDITOR or $VISUAL to be set"
           when :editor_failed
             @output.puts "editor exited with a non-zero status; post not sent"
           end

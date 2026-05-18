@@ -113,12 +113,15 @@ If you have been using a single-account installation of an earlier `tempest` rel
 |------------------|--------------------------------------------------|
 | `:timeline`      | Fetch and print the home timeline                |
 | `:stream on/off` | Toggle the Jetstream live feed                   |
+| `:compose`       | Open your editor to compose a multi-line post    |
 | `:open $LX`      | Open the URL with id `$LX` in the browser        |
 | `:help`          | Show in-app help                                 |
 | `:quit`          | Exit (`Ctrl-D` works too)                        |
 | `$XX <text>`     | Reply to the post with id `$XX`                  |
 
 Anything else you type is sent as a new post.
+
+`:compose` hands the terminal over to your editor so you can write a longer post without fighting the single-line prompt. The editor is picked from `$VISUAL`, then `$EDITOR`, and falls back to `vi`. Lines that start with `#` are treated as comments and stripped; save with an empty body to cancel. Remember to `export` the variable in your shell rc (`export EDITOR=nvim`) — without `export`, the value is not inherited by child processes and the fallback to `vi` kicks in.
 
 Each post in the timeline is prefixed with a short `$XX` id, and URLs found inside posts get their own `$LX` ids. Use those ids with `$XX <text>` to reply or `:open $LX` to open a link. Like and repost events show the subject post's `$XX` id in trailing brackets (for example `liked @bob's post [$AA]`) whenever the original post is still in the session registry, so you can reply to it directly.
 

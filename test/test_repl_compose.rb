@@ -74,11 +74,32 @@ class TestREPLCompose < Minitest::Test
     assert_nil body
   end
 
-  def test_returns_no_editor_when_env_has_no_editor_variable
-    status, body = Tempest::REPL::Compose.run(env: {}, runner: ->(_e, _p) { true })
+  def test_falls_back_to_vi_when_env_has_no_editor_variable
+    captured_editor = nil
+    runner = ->(editor, path) {
+      captured_editor = editor
+      File.write(path, "from vi fallback\n")
+      true
+    }
 
-    assert_equal :no_editor, status
-    assert_nil body
+    status, body = Tempest::REPL::Compose.run(env: {}, runner: runner)
+
+    assert_equal :ok, status
+    assert_equal "from vi fallback", body
+    assert_equal "vi", captured_editor
+  end
+
+  def test_falls_back_to_vi_when_editor_variable_is_blank
+    captured_editor = nil
+    runner = ->(editor, path) {
+      captured_editor = editor
+      File.write(path, "blank-editor body\n")
+      true
+    }
+
+    Tempest::REPL::Compose.run(env: { "EDITOR" => "   " }, runner: runner)
+
+    assert_equal "vi", captured_editor
   end
 
   def test_visual_takes_precedence_over_editor

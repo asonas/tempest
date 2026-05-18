@@ -13,7 +13,6 @@ module Tempest
     # Return values:
     #   [:ok, body]            successful compose; body is non-empty
     #   [:empty, nil]          user saved an empty body — treat as cancellation
-    #   [:no_editor, nil]      neither $VISUAL nor $EDITOR is set
     #   [:editor_failed, nil]  the editor subprocess returned a non-zero status
     #
     # Lines beginning with `#` are stripped from the file before posting (so we
@@ -31,7 +30,6 @@ module Tempest
       def run(env: ENV, runner: Kernel.method(:system),
               tempfile_factory: ->(suffix) { Tempfile.new(["tempest-compose-", suffix]) })
         editor = pick_editor(env)
-        return [:no_editor, nil] if editor.nil?
 
         file = tempfile_factory.call(".txt")
         path = file.path
@@ -55,10 +53,15 @@ module Tempest
         end
       end
 
+      # Editor resolution order, matching git's convention: $VISUAL, then
+      # $EDITOR, then "vi" as a POSIX-mandated last resort. The fallback means
+      # we never need to surface a "no editor" error to the user; if even vi
+      # cannot be exec'd, `Kernel.system` returns false and the call surfaces
+      # as :editor_failed.
       def pick_editor(env)
         candidate = env["VISUAL"]
         candidate = env["EDITOR"] if candidate.nil? || candidate.strip.empty?
-        return nil if candidate.nil? || candidate.strip.empty?
+        candidate = "vi" if candidate.nil? || candidate.strip.empty?
         candidate
       end
 
