@@ -57,7 +57,7 @@ module Tempest
         added_at: Time.now.utc,
       )
 
-      logger&.info("migrated session/cursor/timeline to accounts/#{did}/")
+      logger&.info("accounts", event: "migrated", did: did, account_dir: account_dir)
       stderr.puts "[tempest] migrated session to #{account_dir}/"
       :migrated
     end

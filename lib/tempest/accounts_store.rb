@@ -46,7 +46,7 @@ module Tempest
       return account.did if @default == account.did
       @default = account.did
       persist
-      @logger&.info("default account set to @#{account.handle} (#{account.did})")
+      @logger&.info("accounts", event: "set_default", handle: account.handle, did: account.did)
       account.did
     end
 
@@ -84,7 +84,7 @@ module Tempest
       list = @accounts.reject { |a| a.did == did } + [replacement]
       @accounts = list.sort_by(&:added_at).freeze
       persist
-      @logger&.info("handle for #{did} changed from @#{old_handle} to @#{handle}")
+      @logger&.info("accounts", event: "handle_changed", did: did, old_handle: old_handle, new_handle: handle)
     end
 
     private
@@ -148,7 +148,7 @@ module Tempest
           @accounts = (@accounts.reject { |a| a.did == did } + [adopted]).sort_by(&:added_at).freeze
           @default ||= did
           changed = true
-          @logger&.info("recovered orphan account dir for #{did} (@#{adopted.handle})")
+          @logger&.info("accounts", event: "orphan_recovered", did: did, handle: adopted.handle)
         end
       end
       persist if changed
@@ -169,7 +169,7 @@ module Tempest
         added_at: File.mtime(session_path).utc,
       )
     rescue JSON::ParserError
-      @logger&.warn("orphan session.json for #{did} is malformed; skipping self-heal")
+      @logger&.warn("accounts", event: "orphan_malformed", did: did)
       nil
     end
 
