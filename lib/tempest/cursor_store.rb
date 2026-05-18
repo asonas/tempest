@@ -3,6 +3,7 @@ require "json"
 require "time"
 
 require_relative "../tempest"
+require_relative "account_paths"
 
 module Tempest
   # Persists the last-seen Jetstream `time_us` so a restarted tempest can hand
@@ -11,12 +12,11 @@ module Tempest
   # caller (StreamManager checks saved_at against its replay window).
   class CursorStore
     def self.default_path(env = ENV)
-      explicit = env["TEMPEST_CURSOR_PATH"]
-      return explicit if explicit && !explicit.empty?
+      Tempest::AccountPaths.legacy_cursor_path(env)
+    end
 
-      base = env["XDG_CONFIG_HOME"]
-      base = File.join(env["HOME"].to_s, ".config") if base.nil? || base.empty?
-      File.join(base, "tempest", "cursor.json")
+    def self.for(env = ENV, did:)
+      new(path: Tempest::AccountPaths.cursor_path(env, did: did))
     end
 
     def initialize(path:)

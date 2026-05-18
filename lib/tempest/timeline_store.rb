@@ -3,6 +3,7 @@ require "json"
 require "time"
 
 require_relative "../tempest"
+require_relative "account_paths"
 require_relative "post"
 require_relative "facet"
 
@@ -17,12 +18,11 @@ module Tempest
     MAX_POSTS = 50
 
     def self.default_path(env = ENV)
-      explicit = env["TEMPEST_TIMELINE_PATH"]
-      return explicit if explicit && !explicit.empty?
+      Tempest::AccountPaths.legacy_timeline_path(env)
+    end
 
-      base = env["XDG_CONFIG_HOME"]
-      base = File.join(env["HOME"].to_s, ".config") if base.nil? || base.empty?
-      File.join(base, "tempest", "timeline.json")
+    def self.for(env = ENV, did:)
+      new(path: Tempest::AccountPaths.timeline_path(env, did: did))
     end
 
     def initialize(path:)

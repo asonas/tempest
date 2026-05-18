@@ -2,17 +2,17 @@ require "fileutils"
 require "json"
 
 require_relative "../tempest"
+require_relative "account_paths"
 require_relative "session"
 
 module Tempest
   class SessionStore
     def self.default_path(env = ENV)
-      explicit = env["TEMPEST_SESSION_PATH"]
-      return explicit if explicit && !explicit.empty?
+      Tempest::AccountPaths.legacy_session_path(env)
+    end
 
-      base = env["XDG_CONFIG_HOME"]
-      base = File.join(env["HOME"].to_s, ".config") if base.nil? || base.empty?
-      File.join(base, "tempest", "session.json")
+    def self.for(env = ENV, did:)
+      new(path: Tempest::AccountPaths.session_path(env, did: did))
     end
 
     def initialize(path:)
