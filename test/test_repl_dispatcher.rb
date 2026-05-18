@@ -121,4 +121,10 @@ class TestREPLDispatcher < Minitest::Test
     assert_equal :fav, cmd.name
     assert_equal [], cmd.args
   end
+
+  def test_colon_compose_returns_compose_command
+    cmd = @dispatcher.dispatch(":compose")
+    assert_equal :compose, cmd.name
+    assert_empty cmd.args
+  end
 end

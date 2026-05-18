@@ -1085,4 +1085,104 @@ class TestREPLRunner < Minitest::Test
     out = run_with([":help", ":quit"])
     assert_match(/:fav \$XX/, out)
   end
+
+  # Simple StringIO that also tracks Screen.disable/enable calls so we can
+  # assert the editor suspend/resume sequence around :compose.
+  class SuspendableOutput < StringIO
+    attr_reader :events
+
+    def initialize
+      super()
+      @events = []
+    end
+
+    def disable
+      @events << :disable
+    end
+
+    def enable
+      @events << :enable
+    end
+  end
+
+  def run_with_compose(inputs, compose:, output: nil)
+    @output = output if output
+    runner = Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: StubReader.new(inputs),
+      output: @output,
+      compose: compose,
+    )
+    runner.run
+    @output.string
+  end
+
+  def test_compose_command_creates_post_with_body_from_editor
+    compose = ->(*) { [:ok, "from editor!"] }
+    out = run_with_compose([":compose", ":quit"], compose: compose)
+
+    assert_equal 1, @client.post_calls.length
+    body = @client.post_calls.first.last
+    assert_equal "from editor!", body[:record]["text"]
+    assert_match(/posted/i, out)
+  end
+
+  def test_compose_command_suspends_and_resumes_screen
+    output = SuspendableOutput.new
+    capture_when_called = nil
+    compose = ->(*) {
+      capture_when_called = output.events.dup
+      [:ok, "ok"]
+    }
+    run_with_compose([":compose", ":quit"], compose: compose, output: output)
+
+    # disable must run before the editor invocation,
+    # enable must run after.
+    assert_equal [:disable], capture_when_called,
+      "Screen must be disabled before the editor runs"
+    assert_equal [:disable, :enable], output.events,
+      "Screen must be re-enabled after the editor returns"
+  end
+
+  def test_compose_command_with_empty_result_does_not_post
+    compose = ->(*) { [:empty, nil] }
+    out = run_with_compose([":compose", ":quit"], compose: compose)
+
+    assert_empty @client.post_calls
+    assert_match(/cancelled/i, out)
+  end
+
+  def test_compose_command_with_no_editor_explains
+    compose = ->(*) { [:no_editor, nil] }
+    out = run_with_compose([":compose", ":quit"], compose: compose)
+
+    assert_empty @client.post_calls
+    assert_match(/EDITOR/, out)
+  end
+
+  def test_compose_command_when_editor_fails_reports_error
+    compose = ->(*) { [:editor_failed, nil] }
+    out = run_with_compose([":compose", ":quit"], compose: compose)
+
+    assert_empty @client.post_calls
+    assert_match(/editor.*non-zero/i, out)
+  end
+
+  def test_compose_command_re_enables_screen_even_if_compose_raises
+    output = SuspendableOutput.new
+    compose = ->(*) { raise "boom" }
+
+    assert_raises(RuntimeError) do
+      run_with_compose([":compose"], compose: compose, output: output)
+    end
+
+    assert_equal [:disable, :enable], output.events,
+      "Screen must be re-enabled even when Compose.run raises"
+  end
+
+  def test_help_lists_compose_command
+    out = run_with([":help", ":quit"])
+    assert_match(/:compose/, out)
+  end
 end

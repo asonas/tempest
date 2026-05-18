@@ -4,6 +4,7 @@ require_relative "../../tempest"
 require_relative "../timeline"
 require_relative "../post"
 require_relative "../jetstream/stream_manager"
+require_relative "compose"
 require_relative "dispatcher"
 require_relative "formatter"
 require_relative "registry"
@@ -17,6 +18,7 @@ module Tempest
         Available commands:
           :timeline       Fetch and print the home timeline
           :stream on|off  Toggle the Jetstream live feed
+          :compose        Open $EDITOR to write a multi-line post
           :open $XX|$LX   Open the post or URL with the given id in the browser
           :fav $XX        Like the post with id $XX
           :relogin        Re-authenticate when the cached session is dead
@@ -35,7 +37,7 @@ module Tempest
       def initialize(session:, client:, input:, output:, dispatcher: Dispatcher.new,
                      stream_manager: nil, handle_resolver: nil, stream_output: nil,
                      timeline_store: nil, registry: Registry.new, opener: DEFAULT_OPENER,
-                     avatar_store: nil, reauth: nil)
+                     avatar_store: nil, reauth: nil, compose: Compose.method(:run))
         @session = session
         @client = client
         @input = input
@@ -49,6 +51,7 @@ module Tempest
         @opener = opener
         @avatar_store = avatar_store
         @reauth = reauth
+        @compose = compose
         # URIs already printed via bootstrap_timeline or backfill_timeline.
         # Jetstream's cursor-replay can re-emit those same posts on startup
         # (the persisted cursor is older than the getTimeline window), so the
@@ -105,6 +108,8 @@ module Tempest
             handle_stream(command.args.first)
           when :post
             handle_post(command.args.first)
+          when :compose
+            handle_compose
           when :reply
             handle_reply(command.args[0], command.args[1])
           when :open
@@ -146,6 +151,32 @@ module Tempest
         @output.puts "error: #{e.message} (#{RELOGIN_HINT})"
       rescue Tempest::Error => e
         @output.puts "error: #{e.message}"
+      end
+
+      def handle_compose
+        # Hand the terminal off to $EDITOR for the duration of the compose so
+        # the editor can take full control of the screen. We re-park the
+        # Screen on return regardless of success or exception.
+        suspend_screen do
+          status, body = @compose.call
+          case status
+          when :ok
+            handle_post(body)
+          when :empty
+            @output.puts "compose cancelled (empty body)"
+          when :no_editor
+            @output.puts "compose requires $EDITOR or $VISUAL to be set"
+          when :editor_failed
+            @output.puts "editor exited with a non-zero status; post not sent"
+          end
+        end
+      end
+
+      def suspend_screen
+        @output.disable if @output.respond_to?(:disable)
+        yield
+      ensure
+        @output.enable if @output.respond_to?(:enable)
       end
 
       def handle_relogin
