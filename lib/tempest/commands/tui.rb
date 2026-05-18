@@ -391,7 +391,7 @@ module Tempest
 
       def help_text
         <<~HELP
-          Usage: tempest [subcommand] [options]
+          Usage: tempest [--user <handle|did>] [subcommand] [options]
 
           Subcommands:
             tui                 (default) launch the interactive TUI
@@ -400,6 +400,15 @@ module Tempest
                                 read posts; --format=line|json|raw, --since, --until, --limit
             whoami              print the signed-in identity
             follow <handle>     follow a Bluesky account
+            login               add a Bluesky account (interactive)
+            accounts list       show known accounts; * marks default. --format=json supported.
+            accounts set-default <handle|did>
+                                pick which account `tempest` uses when --user is unset
+
+          Global options:
+            --user <handle|did>  Pick which account to act as. Defaults to the
+                                 entry marked default in accounts.json. Not
+                                 accepted by `login` or `accounts`.
 
           TUI options:
             -h, --help          Show this help
@@ -414,10 +423,9 @@ module Tempest
                                 ~/.local/state/tempest) and use size-based
                                 rotation (5 MiB x 5 files).
 
-          Environment (required only when no cached session is available):
+          Environment (required only on first run, when accounts.json is absent):
             TEMPEST_IDENTIFIER     Your handle (e.g. asonas.bsky.social)
             TEMPEST_APP_PASSWORD   An app password generated in Bluesky settings
-            TEMPEST_PDS_HOST       Override PDS host (default: https://bsky.social)
             TEMPEST_AUTH_FACTOR_TOKEN
                                    Pre-supply an email sign-in code (rarely needed; the CLI will
                                    prompt interactively when Bluesky asks for one)
@@ -425,13 +433,6 @@ module Tempest
             TEMPEST_OPEN_CMD       Command used to open URLs when :open $LX is invoked
                                    (default: "open"). The URL is passed as the single
                                    argument after the command.
-            TEMPEST_SESSION_PATH   Override the session cache path (default:
-                                   $XDG_CONFIG_HOME/tempest/session.json or
-                                   ~/.config/tempest/session.json). The cache holds refreshed
-                                   tokens so the email sign-in code is only requested once.
-            TEMPEST_CURSOR_PATH    Override the Jetstream cursor cache path (default:
-                                   $XDG_CONFIG_HOME/tempest/cursor.json). Holds the last-seen
-                                   time_us so a restart can replay missed events.
             TEMPEST_FEED           "home" (default) or "self"; equivalent to --feed.
             TEMPEST_DEBUG          Set to 1 to behave as if --debug was passed.
             TEMPEST_LOG_DIR        Override the directory holding info.log and debug.log.
