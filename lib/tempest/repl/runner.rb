@@ -171,10 +171,10 @@ module Tempest
       end
 
       def suspend_screen
-        @output.disable if @output.respond_to?(:disable)
+        @output.suspend if @output.respond_to?(:suspend)
         yield
       ensure
-        @output.enable if @output.respond_to?(:enable)
+        @output.resume if @output.respond_to?(:resume)
       end
 
       def handle_relogin

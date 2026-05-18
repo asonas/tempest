@@ -46,6 +46,26 @@ module Tempest
         @enabled = false
       end
 
+      # Transient teardown for handing the terminal off to a subprocess (e.g.
+      # $EDITOR via `:compose`). Unlike `disable`, this does NOT issue the
+      # Kitty graphics delete sequence — terminals that support the Kitty
+      # protocol keep image placements in the main screen buffer even while
+      # the editor draws on the alternate buffer, so suspending without
+      # deleting lets the avatars re-appear automatically when the editor
+      # exits. Pair with `resume` to re-establish the scrolling region.
+      def suspend
+        return unless @enabled
+        uninstall_resize_trap
+        @io.print "\e[r"
+        @io.flush if @io.respond_to?(:flush)
+        @enabled = false
+      end
+
+      def resume
+        return if @enabled
+        enable
+      end
+
       def enabled?
         @enabled
       end

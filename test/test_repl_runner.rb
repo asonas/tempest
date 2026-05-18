@@ -1086,7 +1086,7 @@ class TestREPLRunner < Minitest::Test
     assert_match(/:fav \$XX/, out)
   end
 
-  # Simple StringIO that also tracks Screen.disable/enable calls so we can
+  # Simple StringIO that also tracks Screen.suspend/resume calls so we can
   # assert the editor suspend/resume sequence around :compose.
   class SuspendableOutput < StringIO
     attr_reader :events
@@ -1096,12 +1096,12 @@ class TestREPLRunner < Minitest::Test
       @events = []
     end
 
-    def disable
-      @events << :disable
+    def suspend
+      @events << :suspend
     end
 
-    def enable
-      @events << :enable
+    def resume
+      @events << :resume
     end
   end
 
@@ -1139,10 +1139,10 @@ class TestREPLRunner < Minitest::Test
 
     # disable must run before the editor invocation,
     # enable must run after.
-    assert_equal [:disable], capture_when_called,
-      "Screen must be disabled before the editor runs"
-    assert_equal [:disable, :enable], output.events,
-      "Screen must be re-enabled after the editor returns"
+    assert_equal [:suspend], capture_when_called,
+      "Screen must be suspended before the editor runs"
+    assert_equal [:suspend, :resume], output.events,
+      "Screen must be resumed after the editor returns"
   end
 
   def test_compose_command_with_empty_result_does_not_post
@@ -1169,8 +1169,8 @@ class TestREPLRunner < Minitest::Test
       run_with_compose([":compose"], compose: compose, output: output)
     end
 
-    assert_equal [:disable, :enable], output.events,
-      "Screen must be re-enabled even when Compose.run raises"
+    assert_equal [:suspend, :resume], output.events,
+      "Screen must be resumed even when Compose.run raises"
   end
 
   def test_help_lists_compose_command

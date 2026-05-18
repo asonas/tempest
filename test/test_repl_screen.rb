@@ -52,6 +52,45 @@ class TestREPLScreen < Minitest::Test
     assert_includes io.string, "\e_Ga=d,q=2\e\\"
   end
 
+  def test_suspend_resets_scrolling_region_but_preserves_kitty_graphics
+    # Suspend is used when handing the terminal off to $EDITOR for `:compose`.
+    # It must NOT issue the Kitty `a=d` (delete all placements) sequence —
+    # otherwise the avatars rendered into the timeline before compose vanish
+    # when the user returns.
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24)
+    screen.enable
+    io.truncate(0); io.rewind
+
+    screen.suspend
+
+    assert_includes io.string, "\e[r"
+    refute_includes io.string, "\e_Ga=d"
+    refute screen.enabled?
+  end
+
+  def test_resume_re_establishes_scrolling_region
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24)
+    screen.enable
+    screen.suspend
+    io.truncate(0); io.rewind
+
+    screen.resume
+
+    assert_includes io.string, "\e[1;23r"
+    assert_includes io.string, "\e[24;1H"
+    assert screen.enabled?
+  end
+
+  def test_suspend_is_a_noop_when_screen_was_never_enabled
+    io = StringIO.new # not a tty, so enable was a noop
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24)
+    screen.suspend # must not crash or write anything
+
+    assert_empty io.string
+  end
+
   def test_puts_when_enabled_writes_above_prompt_via_decsc_decrc
     io = FakeTTY.new
     screen = Tempest::REPL::Screen.new(io: io, rows: 24)
