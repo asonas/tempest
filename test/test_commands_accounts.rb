@@ -124,4 +124,24 @@ class TestCommandsAccounts < Minitest::Test
       assert_match(/unknown accounts subcommand: foo/, err)
     end
   end
+
+  def test_list_invalid_format_with_empty_store
+    with_env do |env, _|
+      code, _out, err = call(env, ["list", "--format=yaml"])
+      assert_equal 64, code
+      assert_match(/invalid --format/, err)
+    end
+  end
+
+  def test_list_invalid_format_with_non_empty_store
+    with_env do |env, _|
+      write_accounts(env, default: "did:plc:a", accounts: [
+        { "did" => "did:plc:a", "handle" => "a.bsky", "identifier" => "a.bsky",
+          "pds_host" => "https://bsky.social", "added_at" => "2026-05-18T00:00:00.000000Z" },
+      ])
+      code, _out, err = call(env, ["list", "--format=yaml"])
+      assert_equal 64, code
+      assert_match(/invalid --format/, err)
+    end
+  end
 end

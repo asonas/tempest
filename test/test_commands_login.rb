@@ -183,6 +183,35 @@ class TestCommandsLogin < Minitest::Test
     end
   end
 
+  def test_login_emits_info_log_with_pds_host
+    with_env do |env, _dir|
+      events = []
+      logger = Object.new
+      logger.define_singleton_method(:info) do |mod, **fields|
+        events << [mod, fields]
+      end
+
+      factory = ->(*, **) { make_session(did: "did:plc:abc", handle: "x.bsky", pds_host: "https://pds.example") }
+
+      stdout = StringIO.new
+      stderr = StringIO.new
+      Tempest::Commands::Login.call(
+        argv: ["--pds-host=https://pds.example"], env: env,
+        stdout: stdout, stderr: stderr,
+        stdin: FakeStdin.new(["x.bsky\n", "p\n"]),
+        session_factory: factory, logger: logger,
+      )
+
+      login_events = events.select { |mod, f| mod == "accounts" && f[:event] == "login" }
+      assert_equal 1, login_events.length
+      _, fields = login_events.first
+      assert_equal "x.bsky", fields[:handle]
+      assert_equal "did:plc:abc", fields[:did]
+      assert_equal "https://pds.example", fields[:pds_host]
+      assert_match(/logged in as @x.bsky \(did:plc:abc\) on https:\/\/pds.example/, stdout.string)
+    end
+  end
+
   def test_handles_2fa_challenge
     with_env do |env, _dir|
       attempts = 0

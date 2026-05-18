@@ -221,7 +221,20 @@ module Tempest
       end
 
       def first_run_env_path(accounts:, env:, stdout:, stdin:, session_factory:)
-        config = Tempest::Config.from_env(env)
+        # First-run env path intentionally pins pds_host to the default so that
+        # the deprecated TEMPEST_PDS_HOST env var has no effect (spec §"Deprecated
+        # env vars"). Alternate PDS hosts must go through `tempest login
+        # --pds-host=...`.
+        identifier = nil_if_empty(env["TEMPEST_IDENTIFIER"])
+        app_password = nil_if_empty(env["TEMPEST_APP_PASSWORD"])
+        raise Tempest::Config::MissingValue, "TEMPEST_IDENTIFIER is not set" if identifier.nil?
+        raise Tempest::Config::MissingValue, "TEMPEST_APP_PASSWORD is not set" if app_password.nil?
+
+        config = Tempest::Config.new(
+          identifier: identifier,
+          app_password: app_password,
+          pds_host: Tempest::Config::DEFAULT_PDS_HOST,
+        )
         session = create_with_2fa(config, env, stdout, stdin, session_factory)
         store = Tempest::SessionStore.for(env, did: session.did)
         session.identifier ||= config.identifier

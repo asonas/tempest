@@ -15,22 +15,32 @@ module Tempest
       # Loads the per-account cached session and refreshes it. Returns the
       # session on success. On failure writes a human-readable line to stderr
       # and returns nil; callers translate the nil into the appropriate exit
-      # code via `exit_code_for`.
+      # code via `exit_code_for` (or `authenticate_with_code` for a more
+      # specific exit code).
       #
       # `user:` is the value of the global `--user <handle|did>` flag, or nil
       # for the default account.
       def authenticate(env:, stderr:, user: nil, logger: nil)
+        session, _code = authenticate_with_code(env: env, stderr: stderr, user: user, logger: logger)
+        session
+      end
+
+      # Like `authenticate` but additionally returns the exit code that the CLI
+      # should use when session is nil. Exit codes follow the spec:
+      # 2 for "unknown user" / "no accounts configured", 3 for session missing
+      # or refresh failure.
+      def authenticate_with_code(env:, stderr:, user: nil, logger: nil)
         Tempest::AccountsMigration.run(env: env, stderr: stderr, logger: logger)
         accounts = Tempest::AccountsStore.new(env: env, logger: logger)
 
         target = resolve_target(accounts, user, stderr)
-        return nil if target.nil?
+        return [nil, 2] if target.nil?
 
         session_store = Tempest::SessionStore.for(env, did: target.did)
         session = session_store.load(identifier: nil, pds_host: nil)
         if session.nil?
           stderr.puts "error: session for @#{target.handle} missing — run `tempest login` to re-authenticate"
-          return nil
+          return [nil, 3]
         end
 
         session.identifier ||= target.identifier
@@ -43,9 +53,9 @@ module Tempest
           session.refresh!
         rescue Tempest::Error => e
           stderr.puts "error: session for @#{target.handle} expired — run `tempest login` to re-authenticate (#{e.message})"
-          return nil
+          return [nil, 3]
         end
-        session
+        [session, 0]
       end
 
       def resolve_target(accounts, user, stderr)

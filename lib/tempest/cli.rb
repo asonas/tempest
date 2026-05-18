@@ -7,6 +7,8 @@ require_relative "commands/feed"
 require_relative "commands/follow"
 require_relative "commands/login"
 require_relative "commands/accounts"
+require_relative "debug_log"
+require_relative "deprecated_envs"
 require_relative "xrpc_client"
 
 module Tempest
@@ -68,6 +70,7 @@ module Tempest
       head = argv.first
       case
       when head.nil?, head.start_with?("-"), head == "tui"
+        Tempest::DeprecatedEnvs.warn_if_set(env: env, stderr: stderr)
         rest = (head == "tui") ? argv.drop(1) : argv
         Tempest::Commands::Tui.call(
           argv: rest, env: env, stdout: stdout, stderr: stderr, stdin: stdin,
@@ -78,10 +81,11 @@ module Tempest
           stderr.puts "error: --user is not supported for `login`"
           return 64
         end
+        logger = build_subcommand_logger(env)
         begin
           Tempest::Commands::Login.call(
             argv: argv.drop(1), env: env, stdout: stdout, stderr: stderr, stdin: stdin,
-            session_factory: session_factory,
+            session_factory: session_factory, logger: logger,
           )
         rescue Tempest::Error, ArgumentError => e
           stderr.puts "error: #{e.message}"
@@ -92,17 +96,20 @@ module Tempest
           stderr.puts "error: --user is not supported for `accounts`"
           return 64
         end
+        logger = build_subcommand_logger(env)
         begin
           Tempest::Commands::Accounts.call(
-            argv: argv.drop(1), env: env, stdout: stdout, stderr: stderr,
+            argv: argv.drop(1), env: env, stdout: stdout, stderr: stderr, logger: logger,
           )
         rescue Tempest::Error, ArgumentError => e
           stderr.puts "error: #{e.message}"
           Tempest::Commands::Base.exit_code_for(e)
         end
       when SUBCOMMANDS.include?(head)
+        Tempest::DeprecatedEnvs.warn_if_set(env: env, stderr: stderr)
+        logger = build_subcommand_logger(env)
         begin
-          dispatch_subcommand(head, argv, env: env, stdout: stdout, stderr: stderr, stdin: stdin, user: user)
+          dispatch_subcommand(head, argv, env: env, stdout: stdout, stderr: stderr, stdin: stdin, user: user, logger: logger)
         rescue Tempest::Error, ArgumentError => e
           stderr.puts "error: #{e.message}"
           Tempest::Commands::Base.exit_code_for(e)
@@ -113,9 +120,18 @@ module Tempest
       end
     end
 
-    def dispatch_subcommand(head, argv, env:, stdout:, stderr:, stdin:, user: nil)
-      session = Tempest::Commands::Base.authenticate(env: env, stderr: stderr, user: user)
-      return 3 if session.nil?
+    # Build the info-level logger used by non-TUI subcommands so that
+    # account/login/migration events still reach info.log. Always non-verbose
+    # (no `debug:` flag), distinct from the TUI's `--debug` channel.
+    def build_subcommand_logger(env)
+      Tempest::DebugLog.build(env: env, debug: false)
+    end
+
+    def dispatch_subcommand(head, argv, env:, stdout:, stderr:, stdin:, user: nil, logger: nil)
+      session, code = Tempest::Commands::Base.authenticate_with_code(
+        env: env, stderr: stderr, user: user, logger: logger,
+      )
+      return code if session.nil?
       client = Tempest::XRPCClient.new(session)
       case head
       when "whoami"

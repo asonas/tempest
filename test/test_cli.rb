@@ -594,6 +594,58 @@ class TestCLIRouting < Minitest::Test
   end
 end
 
+class TestCLIDeprecatedEnvWarning < Minitest::Test
+  def test_warns_when_tempest_session_path_set_for_tui
+    Dir.mktmpdir do |dir|
+      env = {
+        "XDG_CONFIG_HOME" => dir, "HOME" => dir, "TEMPEST_NO_LOG" => "1",
+        "TEMPEST_SESSION_PATH" => "/some/path",
+      }
+      err = StringIO.new
+      Tempest::CLI.run(argv: ["tui"], env: env, stdout: StringIO.new, stderr: err)
+      assert_match(/warning: TEMPEST_SESSION_PATH is no longer honored/, err.string)
+    end
+  end
+
+  def test_no_warning_for_login
+    Dir.mktmpdir do |dir|
+      env = {
+        "XDG_CONFIG_HOME" => dir, "HOME" => dir, "TEMPEST_NO_LOG" => "1",
+        "TEMPEST_SESSION_PATH" => "/some/path",
+      }
+      # Provide a sentinel stdin that terminates the login prompt quickly.
+      stdin = StringIO.new("")
+      err = StringIO.new
+      Tempest::CLI.run(argv: ["login"], env: env, stdout: StringIO.new, stderr: err, stdin: stdin)
+      refute_match(/no longer honored/, err.string)
+    end
+  end
+end
+
+class TestCLIUnknownUserExitCode < Minitest::Test
+  def test_unknown_user_via_subcommand_exits_2
+    Dir.mktmpdir do |dir|
+      env = { "XDG_CONFIG_HOME" => dir, "HOME" => dir, "TEMPEST_NO_LOG" => "1" }
+      # Pre-seed an account so accounts.json exists but the requested user doesn't.
+      did = "did:plc:known"
+      FileUtils.mkdir_p(Tempest::AccountPaths.account_dir(env, did: did), mode: 0o700)
+      File.write(Tempest::AccountPaths.accounts_json_path(env), JSON.generate(
+        "version" => 1, "default" => did,
+        "accounts" => [{ "did" => did, "handle" => "known.bsky", "identifier" => "known.bsky",
+                         "pds_host" => "https://bsky.social", "added_at" => "2026-05-18T00:00:00.000000Z" }],
+      ))
+
+      err = StringIO.new
+      status = Tempest::CLI.run(
+        argv: ["--user", "unknown.bsky", "whoami"], env: env,
+        stdout: StringIO.new, stderr: err,
+      )
+      assert_equal 2, status
+      assert_match(/unknown user: unknown\.bsky/, err.string)
+    end
+  end
+end
+
 class TestCLIUserGate < Minitest::Test
   def test_login_rejects_user_flag
     Dir.mktmpdir do |dir|

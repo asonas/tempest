@@ -10,15 +10,15 @@ module Tempest
     module Accounts
       module_function
 
-      def call(argv:, env:, stdout:, stderr:)
-        Tempest::AccountsMigration.run(env: env, stderr: stderr)
+      def call(argv:, env:, stdout:, stderr:, logger: nil)
+        Tempest::AccountsMigration.run(env: env, stderr: stderr, logger: logger)
         sub = argv.first
 
         case sub
         when "list"
-          list(argv.drop(1), env: env, stdout: stdout, stderr: stderr)
+          list(argv.drop(1), env: env, stdout: stdout, stderr: stderr, logger: logger)
         when "set-default"
-          set_default(argv.drop(1), env: env, stdout: stdout, stderr: stderr)
+          set_default(argv.drop(1), env: env, stdout: stdout, stderr: stderr, logger: logger)
         when nil
           stdout.puts "usage: tempest accounts list|set-default ..."
           64
@@ -28,14 +28,19 @@ module Tempest
         end
       end
 
-      def list(argv, env:, stdout:, stderr:)
+      def list(argv, env:, stdout:, stderr:, logger: nil)
         format = "line"
         argv.each do |arg|
           if (m = arg.match(/\A--format=(\S+)\z/))
             format = m[1]
           end
         end
-        store = Tempest::AccountsStore.new(env: env)
+        unless %w[line json].include?(format)
+          stderr.puts "error: invalid --format: #{format.inspect}"
+          return 64
+        end
+
+        store = Tempest::AccountsStore.new(env: env, logger: logger)
 
         if store.accounts.empty?
           if format == "json"
@@ -66,21 +71,18 @@ module Tempest
             marker = (a.did == store.default) ? "* " : "  "
             stdout.puts "#{marker}@#{a.handle} (#{a.did}) #{a.pds_host}  added #{a.added_at.utc.strftime("%Y-%m-%d")}"
           end
-        else
-          stderr.puts "error: invalid --format: #{format}"
-          return 64
         end
         0
       end
 
-      def set_default(argv, env:, stdout:, stderr:)
+      def set_default(argv, env:, stdout:, stderr:, logger: nil)
         value = argv.first
         if value.nil? || value.empty?
           stderr.puts "usage: tempest accounts set-default <handle|did>"
           return 64
         end
 
-        store = Tempest::AccountsStore.new(env: env)
+        store = Tempest::AccountsStore.new(env: env, logger: logger)
         target = store.resolve(value)
         if target.nil?
           stderr.puts "error: unknown user: #{value} (run `tempest accounts list` to see known accounts)"

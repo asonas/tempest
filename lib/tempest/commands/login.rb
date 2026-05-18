@@ -22,8 +22,8 @@ module Tempest
 
       DEFAULT_PDS_HOST = Tempest::Config::DEFAULT_PDS_HOST
 
-      def call(argv:, env:, stdout:, stderr:, stdin:, session_factory: nil)
-        Tempest::AccountsMigration.run(env: env, stderr: stderr)
+      def call(argv:, env:, stdout:, stderr:, stdin:, session_factory: nil, logger: nil)
+        Tempest::AccountsMigration.run(env: env, stderr: stderr, logger: logger)
         session_factory ||= Tempest::Session.method(:create)
 
         pds_host, _rest = parse(argv, stderr: stderr)
@@ -58,7 +58,7 @@ module Tempest
         session.identifier ||= identifier
         session_store.save(session, identifier: identifier)
 
-        accounts = Tempest::AccountsStore.new(env: env)
+        accounts = Tempest::AccountsStore.new(env: env, logger: logger)
         accounts.add_account(
           did: session.did,
           handle: session.handle,
@@ -67,7 +67,8 @@ module Tempest
           added_at: Time.now.utc,
         )
 
-        stdout.puts "logged in as @#{session.handle} (#{session.did})"
+        logger&.info("accounts", event: "login", handle: session.handle, did: session.did, pds_host: pds_host)
+        stdout.puts "logged in as @#{session.handle} (#{session.did}) on #{pds_host}"
         0
       rescue Tempest::AuthenticationError => e
         stderr.puts "error: login failed: #{e.message}"
