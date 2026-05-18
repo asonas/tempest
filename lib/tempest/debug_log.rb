@@ -127,8 +127,9 @@ module Tempest
     class Channel
       attr_reader :loggers
 
-      def initialize(loggers:)
+      def initialize(loggers:, defaults: {})
         @loggers = Array(loggers)
+        @defaults = defaults.freeze
       end
 
       def info(mod, event:, **fields)
@@ -147,6 +148,15 @@ module Tempest
         emit(Logger::ERROR, mod, event, fields)
       end
 
+      # Returns a child channel that prepends `default_fields` to every
+      # subsequent log call. Used to attach per-session context such as `did=`
+      # to long-lived components (StreamManager, Watchdog) without sprinkling
+      # the field across every call site.
+      def with(**default_fields)
+        return self if default_fields.empty?
+        Channel.new(loggers: @loggers, defaults: @defaults.merge(default_fields))
+      end
+
       def close
         @loggers.each do |logger|
           begin
@@ -162,7 +172,8 @@ module Tempest
 
       def emit(level, mod, event, fields)
         return if @loggers.empty?
-        msg = format_body(event, fields)
+        merged = @defaults.merge(fields)
+        msg = format_body(event, merged)
         @loggers.each { |logger| logger.add(level, msg, mod) }
       end
 

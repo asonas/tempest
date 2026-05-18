@@ -87,10 +87,12 @@ module Tempest
           cursor_store: cursor_store(env, did: target_did),
           filter: plan.filter,
           logger: debug_logger,
+          did: target_did,
         )
         watchdog = Tempest::Jetstream::Watchdog.new(
           stream_manager: stream_manager,
           logger: debug_logger,
+          did: target_did,
           **watchdog_options(env),
         )
 

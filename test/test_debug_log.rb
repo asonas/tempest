@@ -239,4 +239,56 @@ class TestDebugLog < Minitest::Test
       channel.close
     end
   end
+
+  # ----- Channel#with context defaults --------------------------------------
+
+  def test_with_prepends_default_fields_to_every_log_call
+    with_string_channel do |channel, io|
+      tagged = channel.with(did: "did:plc:abc")
+      tagged.info("stream", event: "subscribe", cursor: nil)
+
+      line = io.string.lines.find { |l| l.include?("event=subscribe") }
+      refute_nil line
+      assert_match(/\bdid=did:plc:abc\b/, line)
+      assert_match(/\bcursor=nil\b/, line)
+    end
+  end
+
+  def test_with_returns_self_when_no_fields_given
+    with_string_channel do |channel, _io|
+      assert_same channel, channel.with
+    end
+  end
+
+  def test_with_does_not_mutate_parent_channel
+    with_string_channel do |channel, io|
+      channel.with(did: "did:plc:abc")
+      channel.info("stream", event: "subscribe")
+
+      line = io.string.lines.find { |l| l.include?("event=subscribe") }
+      refute_match(/did=/, line)
+    end
+  end
+
+  def test_with_chains_default_fields
+    with_string_channel do |channel, io|
+      base = channel.with(did: "did:plc:abc")
+      base.with(component: "stream").info("stream", event: "live_resumed")
+
+      line = io.string.lines.find { |l| l.include?("event=live_resumed") }
+      assert_match(/\bdid=did:plc:abc\b/, line)
+      assert_match(/\bcomponent=stream\b/, line)
+    end
+  end
+
+  def test_explicit_field_overrides_default
+    with_string_channel do |channel, io|
+      tagged = channel.with(did: "did:plc:default")
+      tagged.info("stream", event: "subscribe", did: "did:plc:override")
+
+      line = io.string.lines.find { |l| l.include?("event=subscribe") }
+      assert_match(/\bdid=did:plc:override\b/, line)
+      refute_match(/did:plc:default/, line)
+    end
+  end
 end

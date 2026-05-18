@@ -25,13 +25,14 @@ module Tempest
                      interval_seconds: DEFAULT_INTERVAL_SECONDS,
                      clock: -> { Time.now },
                      sleeper: ->(s) { sleep(s) },
-                     logger: nil)
+                     logger: nil, did: nil)
         @stream_manager = stream_manager
         @threshold_seconds = threshold_seconds
         @interval_seconds = interval_seconds
         @clock = clock
         @sleeper = sleeper
-        @logger = logger || Tempest::DebugLog.null_channel
+        base = logger || Tempest::DebugLog.null_channel
+        @logger = did ? base.with(did: did) : base
         @thread = nil
         @mutex = Mutex.new
         @stopping = false

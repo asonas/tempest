@@ -764,6 +764,22 @@ class TestJetstreamStreamManager < Minitest::Test
     manager2.stop
   end
 
+  def test_did_keyword_tags_log_events
+    io = StringIO.new
+    logger = Logger.new(io)
+    logger.formatter = Tempest::DebugLog.formatter
+    channel = Tempest::DebugLog::Channel.new(loggers: [logger])
+
+    client = FakeClient.new(block_on_iteration: true)
+    manager = Tempest::Jetstream::StreamManager.new(
+      client: client, logger: channel, did: "did:plc:abc",
+    )
+    manager.start { |_| }
+    manager.stop
+
+    assert_match(/event=stopping[^\n]*did=did:plc:abc/, io.string)
+  end
+
   def test_last_event_at_is_nil_before_any_event
     client = FakeClient.new(block_on_iteration: true)
     manager = Tempest::Jetstream::StreamManager.new(client: client)

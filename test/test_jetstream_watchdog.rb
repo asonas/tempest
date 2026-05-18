@@ -226,4 +226,33 @@ class TestJetstreamWatchdog < Minitest::Test
     sleeper.requests.pop
     watchdog.stop
   end
+
+  def test_did_keyword_tags_log_events
+    io = StringIO.new
+    logger = Logger.new(io)
+    logger.formatter = Tempest::DebugLog.formatter
+    channel = Tempest::DebugLog::Channel.new(loggers: [logger])
+
+    now = Time.utc(2026, 5, 18, 0, 0, 0)
+    stream = FakeStreamManager.new(last_event_at: now - 700, running: true)
+    sleeper = TickSleeper.new
+
+    watchdog = Tempest::Jetstream::Watchdog.new(
+      stream_manager: stream,
+      threshold_seconds: 600,
+      interval_seconds: 30,
+      clock: -> { now },
+      sleeper: sleeper,
+      logger: channel,
+      did: "did:plc:abc",
+    )
+
+    watchdog.start
+    sleeper.requests.pop
+    sleeper.step
+    sleeper.requests.pop
+    watchdog.stop
+
+    assert_match(/event=stalled_detected[^\n]*did=did:plc:abc/, io.string)
+  end
 end

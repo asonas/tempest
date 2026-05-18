@@ -25,7 +25,7 @@ module Tempest
       def initialize(client:, backoff: DEFAULT_BACKOFF, sleeper: ->(s) { sleep(s) },
                      clock: -> { Time.now }, cursor_store: nil,
                      cursor_save_interval: DEFAULT_CURSOR_SAVE_INTERVAL,
-                     filter: nil, logger: nil)
+                     filter: nil, logger: nil, did: nil)
         @client = client
         @backoff = backoff
         @sleeper = sleeper
@@ -33,7 +33,8 @@ module Tempest
         @cursor_store = cursor_store
         @cursor_save_interval = cursor_save_interval
         @filter = filter
-        @logger = logger || Tempest::DebugLog.null_channel
+        base = logger || Tempest::DebugLog.null_channel
+        @logger = did ? base.with(did: did) : base
         @thread = nil
         @mutex = Mutex.new
         @stopping = false
