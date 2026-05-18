@@ -8,7 +8,7 @@ module Tempest
       module_function
 
       def call(argv:, session:, client:, stdout:, stderr:)
-        handle = argv.first
+        handle = argv.first&.sub(/\A@/, "")
         if handle.nil? || handle.empty?
           stderr.puts "usage: tempest follow <handle>"
           return 64

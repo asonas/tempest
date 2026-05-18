@@ -50,6 +50,18 @@ class TestCommandsFollow < Minitest::Test
     assert_equal 64, status
   end
 
+  def test_at_prefixed_handle_is_stripped_from_output
+    client = FakeClient.new
+    out = StringIO.new
+    status = Tempest::Commands::Follow.call(
+      argv: ["@twada.bsky.social"], session: fake_session, client: client,
+      stdout: out, stderr: StringIO.new,
+    )
+    assert_equal 0, status
+    assert_equal "Followed @twada.bsky.social\n", out.string
+    assert_equal "twada.bsky.social", client.get_calls.first[1]["actor"]
+  end
+
   def test_follow_resolves_handle_and_calls_createRecord
     client = FakeClient.new
     out = StringIO.new
