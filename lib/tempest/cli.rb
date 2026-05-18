@@ -4,11 +4,12 @@ require_relative "commands/base"
 require_relative "commands/whoami"
 require_relative "commands/post"
 require_relative "commands/feed"
+require_relative "commands/follow"
 require_relative "xrpc_client"
 
 module Tempest
   module CLI
-    SUBCOMMANDS = %w[tui post feed whoami].freeze
+    SUBCOMMANDS = %w[tui post feed whoami follow].freeze
 
     module_function
 
@@ -63,6 +64,11 @@ module Tempest
         )
       when "feed"
         Tempest::Commands::Feed.call(
+          argv: argv.drop(1), session: session, client: client,
+          stdout: stdout, stderr: stderr,
+        )
+      when "follow"
+        Tempest::Commands::Follow.call(
           argv: argv.drop(1), session: session, client: client,
           stdout: stdout, stderr: stderr,
         )

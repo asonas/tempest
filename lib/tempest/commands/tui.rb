@@ -296,6 +296,7 @@ module Tempest
             feed me|timeline|author <handle> [opts]
                                 read posts; --format=line|json|raw, --since, --until, --limit
             whoami              print the signed-in identity
+            follow <handle>     follow a Bluesky account
 
           TUI options:
             -h, --help          Show this help
