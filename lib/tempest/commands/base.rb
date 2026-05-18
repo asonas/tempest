@@ -1,5 +1,7 @@
 require_relative "../commands"
 require_relative "../session_store"
+require_relative "../accounts_store"
+require_relative "../accounts_migration"
 require_relative "../config"
 require_relative "../repl/formatter"
 
@@ -10,25 +12,63 @@ module Tempest
 
       VALID_FORMATS = %i[line json raw].freeze
 
-      # Loads the cached session and refreshes it. Returns the session on
-      # success. On failure (no cache, refresh rejected) writes a single
-      # human-readable line to stderr and returns nil; callers translate the
-      # nil into exit code 3.
-      def authenticate(env:, stderr:, store: nil)
-        store ||= Tempest::SessionStore.new(path: Tempest::SessionStore.default_path(env))
-        session = store.load(identifier: env["TEMPEST_IDENTIFIER"], pds_host: env["TEMPEST_PDS_HOST"])
+      # Loads the per-account cached session and refreshes it. Returns the
+      # session on success. On failure writes a human-readable line to stderr
+      # and returns nil; callers translate the nil into the appropriate exit
+      # code via `exit_code_for`.
+      #
+      # `user:` is the value of the global `--user <handle|did>` flag, or nil
+      # for the default account.
+      def authenticate(env:, stderr:, user: nil, logger: nil)
+        Tempest::AccountsMigration.run(env: env, stderr: stderr, logger: logger)
+        accounts = Tempest::AccountsStore.new(env: env, logger: logger)
+
+        target = resolve_target(accounts, user, stderr)
+        return nil if target.nil?
+
+        session_store = Tempest::SessionStore.for(env, did: target.did)
+        session = session_store.load(identifier: nil, pds_host: nil)
         if session.nil?
-          stderr.puts "error: no cached session — run `tempest tui` once to sign in"
+          stderr.puts "error: session for @#{target.handle} missing — run `tempest login` to re-authenticate"
           return nil
         end
-        session.on_change = ->(s) { store.save(s, identifier: s.identifier) }
+
+        session.identifier ||= target.identifier
+        session.on_change = ->(s) {
+          session_store.save(s, identifier: s.identifier || target.identifier)
+          accounts.update_handle(did: s.did, handle: s.handle) if s.did && s.handle
+        }
+
         begin
           session.refresh!
         rescue Tempest::Error => e
-          stderr.puts "error: cached session refresh failed: #{e.message}"
+          stderr.puts "error: session for @#{target.handle} expired — run `tempest login` to re-authenticate (#{e.message})"
           return nil
         end
         session
+      end
+
+      def resolve_target(accounts, user, stderr)
+        if user
+          target = accounts.resolve(user)
+          if target.nil?
+            stderr.puts "error: unknown user: #{user} (run `tempest accounts list` to see known accounts)"
+            return nil
+          end
+          return target
+        end
+
+        if accounts.default
+          return accounts.resolve(accounts.default)
+        end
+
+        if accounts.accounts.empty?
+          stderr.puts "error: no accounts configured — run `tempest login` to add one"
+          return nil
+        end
+
+        stderr.puts "error: no default account set — run `tempest accounts set-default <handle>`"
+        nil
       end
 
       # Returns one of :line, :json, :raw. Callers may override with --format.

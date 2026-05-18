@@ -52,4 +52,20 @@ class TestCursorStore < Minitest::Test
     env = { "TEMPEST_CURSOR_PATH" => "/custom/cursor.json" }
     assert_equal "/custom/cursor.json", Tempest::CursorStore.default_path(env)
   end
+
+  def test_for_uses_per_did_path
+    env = { "XDG_CONFIG_HOME" => @tmp }
+    store = Tempest::CursorStore.for(env, did: "did:plc:abc")
+    assert_equal File.join(@tmp, "tempest", "accounts", "did:plc:abc", "cursor.json"), store.path
+  end
+
+  def test_for_save_creates_per_did_file
+    env = { "XDG_CONFIG_HOME" => @tmp }
+    did = "did:plc:abc"
+    store = Tempest::CursorStore.for(env, did: did)
+    store.save(time_us: 123)
+
+    expected = File.join(@tmp, "tempest", "accounts", did, "cursor.json")
+    assert File.exist?(expected)
+  end
 end

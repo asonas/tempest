@@ -4,6 +4,8 @@ require_relative "../config"
 require_relative "../debug_log"
 require_relative "../session"
 require_relative "../session_store"
+require_relative "../accounts_store"
+require_relative "../accounts_migration"
 require_relative "../cursor_store"
 require_relative "../timeline_store"
 require_relative "../xrpc_client"
@@ -26,14 +28,30 @@ module Tempest
 
       def call(argv:, env:, stdout:, stderr:, stdin:,
                session_factory: Tempest::Session.method(:create),
-               store: nil)
+               store: nil, user: nil)
         Tempest::REPL::Formatter.color = stdout.respond_to?(:tty?) && stdout.tty? && env["NO_COLOR"].to_s.empty?
 
         debug_logger = build_debug_logger(env, argv: argv)
         announce_debug_logger(debug_logger, stderr)
 
-        store ||= Tempest::SessionStore.new(path: Tempest::SessionStore.default_path(env))
-        session = sign_in(env, stdout, stdin, session_factory, store: store)
+        Tempest::AccountsMigration.run(env: env, stderr: stderr, logger: debug_logger)
+
+        if store
+          # Test injection path: behave as the legacy single-account flow so
+          # existing tests pass unchanged.
+          session = sign_in(env, stdout, stdin, session_factory, store: store)
+          target_did = session.did
+        else
+          accounts = Tempest::AccountsStore.new(env: env, logger: debug_logger)
+          target_did, session = sign_in_with_accounts(
+            accounts: accounts, env: env, user: user,
+            stdout: stdout, stdin: stdin, stderr: stderr,
+            session_factory: session_factory,
+          )
+          return 3 if session.nil?
+          store = Tempest::SessionStore.for(env, did: target_did)
+        end
+
         client = Tempest::XRPCClient.new(session)
         input = RelineReader.new
 
@@ -66,7 +84,7 @@ module Tempest
         )
         stream_manager = Tempest::Jetstream::StreamManager.new(
           client: jetstream_client,
-          cursor_store: cursor_store(env),
+          cursor_store: cursor_store(env, did: target_did),
           filter: plan.filter,
           logger: debug_logger,
         )
@@ -91,7 +109,7 @@ module Tempest
           stream_manager: stream_manager,
           handle_resolver: handle_resolver,
           avatar_store: avatar_store,
-          timeline_store: timeline_store(env),
+          timeline_store: timeline_store(env, did: target_did),
           opener: opener_for(env: env),
           reauth: build_reauth(env, stdout, stdin, session_factory),
         )
@@ -145,6 +163,83 @@ module Tempest
         session
       end
 
+      # Multi-account-aware sign-in for `tempest tui`. Returns [did, session] on
+      # success, or [nil, nil] when stderr already received the error message.
+      #
+      # Order of precedence:
+      #   1. `user` argument: resolve against accounts.json; refresh
+      #      `accounts/<did>/session.json`. Fail loudly on unknown user or
+      #      refresh failure.
+      #   2. Default account: same flow, target is `accounts.default`.
+      #   3. No accounts and `TEMPEST_IDENTIFIER`/`TEMPEST_APP_PASSWORD` set:
+      #      first-run env path. Create session via 2FA-aware factory, save it
+      #      under the per-DID layout, and register it as default.
+      #   4. No accounts and no env: stderr "no accounts configured" and bail.
+      def sign_in_with_accounts(accounts:, env:, user:, stdout:, stdin:, stderr:, session_factory:)
+        if user
+          target = accounts.resolve(user)
+          if target.nil?
+            stderr.puts "error: unknown user: #{user} (run `tempest accounts list` to see known accounts)"
+            return [nil, nil]
+          end
+          return resume_account(accounts: accounts, env: env, target: target, stderr: stderr)
+        end
+
+        if accounts.default
+          target = accounts.resolve(accounts.default)
+          return resume_account(accounts: accounts, env: env, target: target, stderr: stderr)
+        end
+
+        if accounts.accounts.empty? && !nil_if_empty(env["TEMPEST_IDENTIFIER"]).nil?
+          return first_run_env_path(accounts: accounts, env: env, stdout: stdout, stdin: stdin, session_factory: session_factory)
+        end
+
+        stderr.puts "error: no accounts configured — run `tempest login` to add one"
+        [nil, nil]
+      end
+
+      def resume_account(accounts:, env:, target:, stderr:)
+        store = Tempest::SessionStore.for(env, did: target.did)
+        session = store.load(identifier: nil, pds_host: nil)
+        if session.nil?
+          stderr.puts "error: session for @#{target.handle} missing — run `tempest login` to re-authenticate"
+          return [nil, nil]
+        end
+
+        session.identifier ||= target.identifier
+        session.on_change = ->(s) {
+          store.save(s, identifier: s.identifier || target.identifier)
+          accounts.update_handle(did: s.did, handle: s.handle) if s.did && s.handle
+        }
+        begin
+          session.refresh!
+        rescue Tempest::Error => e
+          stderr.puts "error: session for @#{target.handle} expired — run `tempest login` to re-authenticate (#{e.message})"
+          return [nil, nil]
+        end
+        [target.did, session]
+      end
+
+      def first_run_env_path(accounts:, env:, stdout:, stdin:, session_factory:)
+        config = Tempest::Config.from_env(env)
+        session = create_with_2fa(config, env, stdout, stdin, session_factory)
+        store = Tempest::SessionStore.for(env, did: session.did)
+        session.identifier ||= config.identifier
+        session.on_change = ->(s) {
+          store.save(s, identifier: s.identifier || config.identifier)
+          accounts.update_handle(did: s.did, handle: s.handle) if s.did && s.handle
+        }
+        store.save(session, identifier: config.identifier)
+        accounts.add_account(
+          did: session.did,
+          handle: session.handle,
+          identifier: config.identifier,
+          pds_host: config.pds_host,
+          added_at: Time.now.utc,
+        )
+        [session.did, session]
+      end
+
       def nil_if_empty(value)
         value.nil? || value.empty? ? nil : value
       end
@@ -181,8 +276,12 @@ module Tempest
         true
       end
 
-      def cursor_store(env)
-        Tempest::CursorStore.new(path: Tempest::CursorStore.default_path(env))
+      def cursor_store(env, did: nil)
+        if did
+          Tempest::CursorStore.for(env, did: did)
+        else
+          Tempest::CursorStore.new(path: Tempest::CursorStore.default_path(env))
+        end
       end
 
       # Returns a Tempest::DebugLog::Channel. info.log is always enabled
@@ -224,8 +323,12 @@ module Tempest
         }
       end
 
-      def timeline_store(env)
-        Tempest::TimelineStore.new(path: Tempest::TimelineStore.default_path(env))
+      def timeline_store(env, did: nil)
+        if did
+          Tempest::TimelineStore.for(env, did: did)
+        else
+          Tempest::TimelineStore.new(path: Tempest::TimelineStore.default_path(env))
+        end
       end
 
       def avatar_cache_dir(env)

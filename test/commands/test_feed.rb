@@ -1,6 +1,8 @@
 require_relative "../test_helper"
+require "fileutils"
 require "stringio"
 require "json"
+require "tempest/account_paths"
 require "tempest/commands/feed"
 require "tempest/session"
 require "tempest/session_store"
@@ -187,13 +189,26 @@ class TestCommandsFeed < Minitest::Test
 
   def test_api_error_propagates_to_exit_code_4_via_dispatcher
     Dir.mktmpdir do |dir|
-      path = File.join(dir, "session.json")
+      env = { "XDG_CONFIG_HOME" => dir, "HOME" => dir, "TEMPEST_NO_LOG" => "1" }
+      did = "did:plc:abc"
+      FileUtils.mkdir_p(Tempest::AccountPaths.account_dir(env, did: did), mode: 0o700)
       seed = Tempest::Session.new(
         access_jwt: "a", refresh_jwt: "r",
-        did: "did:plc:abc", handle: "asonas.bsky.social",
+        did: did, handle: "asonas.bsky.social",
         pds_host: "https://bsky.social",
       )
-      Tempest::SessionStore.new(path: path).save(seed, identifier: "asonas.bsky.social")
+      Tempest::SessionStore.for(env, did: did).save(seed, identifier: "asonas.bsky.social")
+      File.write(Tempest::AccountPaths.accounts_json_path(env), JSON.generate(
+        "version" => 1,
+        "default" => did,
+        "accounts" => [{
+          "did" => did,
+          "handle" => "asonas.bsky.social",
+          "identifier" => "asonas.bsky.social",
+          "pds_host" => "https://bsky.social",
+          "added_at" => "2026-05-18T00:00:00.000000Z",
+        }],
+      ))
 
       stub_request(:post, "https://bsky.social/xrpc/com.atproto.server.refreshSession")
         .with(headers: { "Authorization" => "Bearer r" })
@@ -203,12 +218,11 @@ class TestCommandsFeed < Minitest::Test
           body: {
             accessJwt: "a2",
             refreshJwt: "r2",
-            did: "did:plc:abc",
+            did: did,
             handle: "asonas.bsky.social",
           }.to_json,
         )
 
-      # Stub the XRPC client so any call raises Tempest::APIError.
       xrpc = Object.new
       def xrpc.get(*); raise Tempest::APIError.new(503, "down"); end
       def xrpc.post(*); raise Tempest::APIError.new(503, "down"); end
@@ -218,7 +232,7 @@ class TestCommandsFeed < Minitest::Test
       err = StringIO.new
       status = Tempest::CLI.run(
         argv: ["feed", "me", "--format=json"],
-        env: { "TEMPEST_SESSION_PATH" => path },
+        env: env,
         stdout: StringIO.new, stderr: err,
       )
       assert_equal 4, status

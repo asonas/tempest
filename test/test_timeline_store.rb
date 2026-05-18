@@ -151,4 +151,10 @@ class TestTimelineStore < Minitest::Test
     assert_equal "at://did:plc:a/app.bsky.feed.post/11", loaded[:posts].first.uri
     assert_equal "at://did:plc:a/app.bsky.feed.post/60", loaded[:posts].last.uri
   end
+
+  def test_for_uses_per_did_path
+    env = { "XDG_CONFIG_HOME" => @tmp }
+    store = Tempest::TimelineStore.for(env, did: "did:plc:abc")
+    assert_equal File.join(@tmp, "tempest", "accounts", "did:plc:abc", "timeline.json"), store.path
+  end
 end

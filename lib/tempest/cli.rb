@@ -5,17 +5,56 @@ require_relative "commands/whoami"
 require_relative "commands/post"
 require_relative "commands/feed"
 require_relative "commands/follow"
+require_relative "commands/login"
+require_relative "commands/accounts"
 require_relative "xrpc_client"
 
 module Tempest
   module CLI
-    SUBCOMMANDS = %w[tui post feed whoami follow].freeze
+    SUBCOMMANDS = %w[tui post feed whoami follow accounts login].freeze
 
     module_function
+
+    # Pulls `--user <name>` / `--user=<name>` out of argv and returns
+    # `[user_or_nil, remaining_argv]`. Raises ArgumentError when the flag is
+    # present but the value is missing or empty. Multiple occurrences: last one
+    # wins.
+    def extract_user(argv)
+      user = nil
+      remaining = []
+      i = 0
+      while i < argv.length
+        arg = argv[i]
+        if arg == "--user"
+          nxt = argv[i + 1]
+          if nxt.nil? || nxt.empty? || nxt.start_with?("-")
+            raise ArgumentError, "--user requires a value"
+          end
+          user = nxt
+          i += 2
+        elsif arg.start_with?("--user=")
+          value = arg["--user=".length..]
+          raise ArgumentError, "--user requires a value" if value.nil? || value.empty?
+          user = value
+          i += 1
+        else
+          remaining << arg
+          i += 1
+        end
+      end
+      [user, remaining]
+    end
 
     def run(argv: ARGV, env: ENV, stdout: $stdout, stderr: $stderr, stdin: $stdin,
             session_factory: Tempest::Session.method(:create),
             store: nil)
+      begin
+        user, argv = extract_user(argv)
+      rescue ArgumentError => e
+        stderr.puts "error: #{e.message}"
+        return 64
+      end
+
       if argv.include?("--version") || argv.include?("-v")
         stdout.puts "tempest #{Tempest::VERSION}"
         return 0
@@ -32,11 +71,38 @@ module Tempest
         rest = (head == "tui") ? argv.drop(1) : argv
         Tempest::Commands::Tui.call(
           argv: rest, env: env, stdout: stdout, stderr: stderr, stdin: stdin,
-          session_factory: session_factory, store: store,
+          session_factory: session_factory, store: store, user: user,
         )
+      when head == "login"
+        if user
+          stderr.puts "error: --user is not supported for `login`"
+          return 64
+        end
+        begin
+          Tempest::Commands::Login.call(
+            argv: argv.drop(1), env: env, stdout: stdout, stderr: stderr, stdin: stdin,
+            session_factory: session_factory,
+          )
+        rescue Tempest::Error, ArgumentError => e
+          stderr.puts "error: #{e.message}"
+          Tempest::Commands::Base.exit_code_for(e)
+        end
+      when head == "accounts"
+        if user
+          stderr.puts "error: --user is not supported for `accounts`"
+          return 64
+        end
+        begin
+          Tempest::Commands::Accounts.call(
+            argv: argv.drop(1), env: env, stdout: stdout, stderr: stderr,
+          )
+        rescue Tempest::Error, ArgumentError => e
+          stderr.puts "error: #{e.message}"
+          Tempest::Commands::Base.exit_code_for(e)
+        end
       when SUBCOMMANDS.include?(head)
         begin
-          dispatch_subcommand(head, argv, env: env, stdout: stdout, stderr: stderr, stdin: stdin)
+          dispatch_subcommand(head, argv, env: env, stdout: stdout, stderr: stderr, stdin: stdin, user: user)
         rescue Tempest::Error, ArgumentError => e
           stderr.puts "error: #{e.message}"
           Tempest::Commands::Base.exit_code_for(e)
@@ -47,8 +113,8 @@ module Tempest
       end
     end
 
-    def dispatch_subcommand(head, argv, env:, stdout:, stderr:, stdin:)
-      session = Tempest::Commands::Base.authenticate(env: env, stderr: stderr)
+    def dispatch_subcommand(head, argv, env:, stdout:, stderr:, stdin:, user: nil)
+      session = Tempest::Commands::Base.authenticate(env: env, stderr: stderr, user: user)
       return 3 if session.nil?
       client = Tempest::XRPCClient.new(session)
       case head

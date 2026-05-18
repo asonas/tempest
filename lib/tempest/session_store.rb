@@ -31,7 +31,7 @@ module Tempest
         "refresh_jwt" => session.refresh_jwt,
       }
 
-      FileUtils.mkdir_p(File.dirname(@path))
+      FileUtils.mkdir_p(File.dirname(@path), mode: 0o700)
       File.open(@path, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |io|
         io.write(JSON.generate(payload))
       end

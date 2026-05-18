@@ -28,7 +28,7 @@ module Tempest
     def save(time_us:, at: Time.now)
       payload = { "time_us" => time_us, "saved_at" => at.utc.iso8601(6) }
 
-      FileUtils.mkdir_p(File.dirname(@path))
+      FileUtils.mkdir_p(File.dirname(@path), mode: 0o700)
       File.open(@path, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |io|
         io.write(JSON.generate(payload))
       end

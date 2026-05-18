@@ -8,12 +8,26 @@ require "tempest/session"
 require "tempest/session_store"
 
 class TestCLI < Minitest::Test
-  def test_run_prints_error_and_returns_non_zero_when_env_missing
-    err = StringIO.new
-    status = Tempest::CLI.run(argv: [], env: {}, stdout: StringIO.new, stderr: err)
+  def with_fresh_config
+    Dir.mktmpdir do |dir|
+      yield ({
+        "XDG_CONFIG_HOME" => dir,
+        "XDG_CACHE_HOME" => dir,
+        "XDG_STATE_HOME" => dir,
+        "HOME" => dir,
+        "TEMPEST_NO_LOG" => "1",
+      })
+    end
+  end
 
-    assert status != 0
-    assert_match(/TEMPEST_IDENTIFIER/, err.string)
+  def test_run_prints_error_and_returns_non_zero_when_env_missing
+    with_fresh_config do |env|
+      err = StringIO.new
+      status = Tempest::CLI.run(argv: [], env: env, stdout: StringIO.new, stderr: err)
+
+      assert status != 0
+      assert_match(/no accounts configured/, err.string)
+    end
   end
 
   def test_run_prints_version_when_version_flag
@@ -25,27 +39,29 @@ class TestCLI < Minitest::Test
   end
 
   def test_run_passes_auth_factor_token_from_env
-    env = {
-      "TEMPEST_IDENTIFIER" => "ason.as",
-      "TEMPEST_APP_PASSWORD" => "xxxx",
-      "TEMPEST_AUTH_FACTOR_TOKEN" => "ABCDE",
-    }
-    captured = nil
-    fake_session_factory = ->(config, auth_factor_token: nil) do
-      captured = auth_factor_token
-      raise Tempest::AuthenticationError.new("stop here", code: "stub")
+    with_fresh_config do |base|
+      env = base.merge(
+        "TEMPEST_IDENTIFIER" => "ason.as",
+        "TEMPEST_APP_PASSWORD" => "xxxx",
+        "TEMPEST_AUTH_FACTOR_TOKEN" => "ABCDE",
+      )
+      captured = nil
+      fake_session_factory = ->(config, auth_factor_token: nil) do
+        captured = auth_factor_token
+        raise Tempest::AuthenticationError.new("stop here", code: "stub")
+      end
+
+      err = StringIO.new
+      Tempest::CLI.run(
+        argv: [],
+        env: env,
+        stdout: StringIO.new,
+        stderr: err,
+        session_factory: fake_session_factory,
+      )
+
+      assert_equal "ABCDE", captured
     end
-
-    err = StringIO.new
-    Tempest::CLI.run(
-      argv: [],
-      env: env,
-      stdout: StringIO.new,
-      stderr: err,
-      session_factory: fake_session_factory,
-    )
-
-    assert_equal "ABCDE", captured
   end
 
   def test_sign_in_reuses_stored_session_when_refresh_succeeds
@@ -493,13 +509,27 @@ end
 class TestCLIWhoami < Minitest::Test
   def test_whoami_routes_through_dispatcher
     Dir.mktmpdir do |dir|
-      path = File.join(dir, "session.json")
+      env = { "XDG_CONFIG_HOME" => dir, "HOME" => dir, "TEMPEST_NO_LOG" => "1" }
       seed = Tempest::Session.new(
         access_jwt: "a", refresh_jwt: "r",
         did: "did:plc:abc", handle: "asonas.bsky.social",
         pds_host: "https://bsky.social",
       )
-      Tempest::SessionStore.new(path: path).save(seed, identifier: "asonas.bsky.social")
+      account_dir = File.join(dir, "tempest", "accounts", "did:plc:abc")
+      FileUtils.mkdir_p(account_dir, mode: 0o700)
+      Tempest::SessionStore.for(env, did: "did:plc:abc")
+                           .save(seed, identifier: "asonas.bsky.social")
+      File.write(File.join(dir, "tempest", "accounts.json"), JSON.generate(
+        "version" => 1,
+        "default" => "did:plc:abc",
+        "accounts" => [{
+          "did" => "did:plc:abc",
+          "handle" => "asonas.bsky.social",
+          "identifier" => "asonas.bsky.social",
+          "pds_host" => "https://bsky.social",
+          "added_at" => "2026-05-18T00:00:00.000000Z",
+        }],
+      ))
 
       stub_request(:post, "https://bsky.social/xrpc/com.atproto.server.refreshSession")
         .with(headers: { "Authorization" => "Bearer r" })
@@ -517,7 +547,7 @@ class TestCLIWhoami < Minitest::Test
       out = StringIO.new
       status = Tempest::CLI.run(
         argv: ["whoami"],
-        env: { "TEMPEST_SESSION_PATH" => path },
+        env: env,
         stdout: out, stderr: StringIO.new,
       )
       assert_equal 0, status
@@ -537,22 +567,129 @@ class TestCLIRouting < Minitest::Test
   end
 
   def test_explicit_tui_subcommand_reaches_tui_path
-    # Reuse the same "missing env" path the existing TUI tests exercise to
-    # prove we got into Commands::Tui without changing observable behaviour.
-    err = StringIO.new
-    status = Tempest::CLI.run(
-      argv: ["tui"], env: {}, stdout: StringIO.new, stderr: err,
-    )
-    refute_equal 0, status
-    assert_match(/TEMPEST_IDENTIFIER/, err.string)
+    # The TUI bails out with the multi-account "no accounts configured" message
+    # when no accounts.json exists and env credentials aren't set; this proves
+    # we entered Commands::Tui.
+    Dir.mktmpdir do |dir|
+      env = { "XDG_CONFIG_HOME" => dir, "HOME" => dir, "TEMPEST_NO_LOG" => "1" }
+      err = StringIO.new
+      status = Tempest::CLI.run(
+        argv: ["tui"], env: env, stdout: StringIO.new, stderr: err,
+      )
+      refute_equal 0, status
+      assert_match(/no accounts configured/, err.string)
+    end
   end
 
   def test_dashflag_only_argv_still_reaches_tui_path
+    Dir.mktmpdir do |dir|
+      env = { "XDG_CONFIG_HOME" => dir, "HOME" => dir, "TEMPEST_NO_LOG" => "1" }
+      err = StringIO.new
+      status = Tempest::CLI.run(
+        argv: ["--no-stream"], env: env, stdout: StringIO.new, stderr: err,
+      )
+      refute_equal 0, status
+      assert_match(/no accounts configured/, err.string)
+    end
+  end
+end
+
+class TestCLIUserGate < Minitest::Test
+  def test_login_rejects_user_flag
+    Dir.mktmpdir do |dir|
+      env = { "XDG_CONFIG_HOME" => dir, "HOME" => dir, "TEMPEST_NO_LOG" => "1" }
+      err = StringIO.new
+      status = Tempest::CLI.run(
+        argv: ["--user", "asonas", "login"], env: env,
+        stdout: StringIO.new, stderr: err, stdin: StringIO.new,
+      )
+      assert_equal 64, status
+      assert_match(/--user is not supported for `login`/, err.string)
+    end
+  end
+
+  def test_accounts_rejects_user_flag
+    Dir.mktmpdir do |dir|
+      env = { "XDG_CONFIG_HOME" => dir, "HOME" => dir, "TEMPEST_NO_LOG" => "1" }
+      err = StringIO.new
+      status = Tempest::CLI.run(
+        argv: ["--user", "asonas", "accounts", "list"], env: env,
+        stdout: StringIO.new, stderr: err,
+      )
+      assert_equal 64, status
+      assert_match(/--user is not supported for `accounts`/, err.string)
+    end
+  end
+
+  def test_user_value_missing_returns_64
     err = StringIO.new
     status = Tempest::CLI.run(
-      argv: ["--no-stream"], env: {}, stdout: StringIO.new, stderr: err,
+      argv: ["--user"], env: {}, stdout: StringIO.new, stderr: err,
     )
-    refute_equal 0, status
-    assert_match(/TEMPEST_IDENTIFIER/, err.string)
+    assert_equal 64, status
+    assert_match(/--user requires a value/, err.string)
+  end
+
+  def test_version_passes_through_with_user_flag
+    out = StringIO.new
+    status = Tempest::CLI.run(
+      argv: ["--user", "asonas", "--version"], env: {},
+      stdout: out, stderr: StringIO.new,
+    )
+    assert_equal 0, status
+    assert_match(/tempest #{Regexp.escape(Tempest::VERSION)}/, out.string)
+  end
+end
+
+class TestCLIExtractUser < Minitest::Test
+  def test_returns_nil_user_when_flag_absent
+    user, rest = Tempest::CLI.extract_user(["tui", "--no-stream"])
+    assert_nil user
+    assert_equal ["tui", "--no-stream"], rest
+  end
+
+  def test_extracts_separate_arg_form
+    user, rest = Tempest::CLI.extract_user(["--user", "asonas", "tui"])
+    assert_equal "asonas", user
+    assert_equal ["tui"], rest
+  end
+
+  def test_extracts_equals_form
+    user, rest = Tempest::CLI.extract_user(["--user=asonas", "tui"])
+    assert_equal "asonas", user
+    assert_equal ["tui"], rest
+  end
+
+  def test_works_before_or_after_subcommand
+    user_a, rest_a = Tempest::CLI.extract_user(["tui", "--user", "asonas"])
+    user_b, rest_b = Tempest::CLI.extract_user(["--user", "asonas", "tui"])
+
+    assert_equal "asonas", user_a
+    assert_equal ["tui"], rest_a
+    assert_equal "asonas", user_b
+    assert_equal ["tui"], rest_b
+  end
+
+  def test_last_specification_wins_for_multiple_flags
+    user, _ = Tempest::CLI.extract_user(["--user", "first", "--user=second", "feed"])
+    assert_equal "second", user
+  end
+
+  def test_raises_when_separate_value_missing_at_end
+    assert_raises(ArgumentError) { Tempest::CLI.extract_user(["--user"]) }
+  end
+
+  def test_raises_when_separate_value_is_another_flag
+    assert_raises(ArgumentError) { Tempest::CLI.extract_user(["--user", "--no-stream"]) }
+  end
+
+  def test_raises_when_equals_value_empty
+    assert_raises(ArgumentError) { Tempest::CLI.extract_user(["--user="]) }
+  end
+
+  def test_version_flag_after_user_still_extracted
+    user, rest = Tempest::CLI.extract_user(["--user", "asonas", "--version"])
+    assert_equal "asonas", user
+    assert_equal ["--version"], rest
   end
 end

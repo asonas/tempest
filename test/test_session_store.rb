@@ -127,4 +127,23 @@ class TestSessionStore < Minitest::Test
     path = Tempest::SessionStore.default_path({ "HOME" => "/home/asonas" })
     assert_equal "/home/asonas/.config/tempest/session.json", path
   end
+
+  def test_for_uses_per_did_path
+    store = Tempest::SessionStore.for({ "XDG_CONFIG_HOME" => @tmp }, did: "did:plc:abc")
+    assert_equal File.join(@tmp, "tempest", "accounts", "did:plc:abc", "session.json"), store.path
+  end
+
+  def test_for_save_and_load_round_trips_through_per_did_path
+    env = { "XDG_CONFIG_HOME" => @tmp }
+    did = "did:plc:abc"
+    store = Tempest::SessionStore.for(env, did: did)
+    store.save(build_session, identifier: "asonas.bsky.social")
+
+    expected = File.join(@tmp, "tempest", "accounts", did, "session.json")
+    assert File.exist?(expected)
+
+    loaded = Tempest::SessionStore.for(env, did: did).load(identifier: nil, pds_host: nil)
+    refute_nil loaded
+    assert_equal "did:plc:abcdef", loaded.did
+  end
 end

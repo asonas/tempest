@@ -1,45 +1,102 @@
 require_relative "../test_helper"
+require "fileutils"
+require "json"
 require "stringio"
 require "tmpdir"
+require "tempest/account_paths"
+require "tempest/accounts_store"
 require "tempest/commands/base"
 require "tempest/session"
 require "tempest/session_store"
 require "tempest/config"
 
 class TestCommandsBase < Minitest::Test
-  def test_auth_returns_session_when_cached_session_refreshes_successfully
+  def with_accounts_dir(&block)
     Dir.mktmpdir do |dir|
-      path = File.join(dir, "session.json")
-      seed = Tempest::Session.new(
-        access_jwt: "old",
-        refresh_jwt: "old-refresh",
-        did: "did:plc:x",
-        handle: "asonas.bsky.social",
-        pds_host: "https://bsky.social",
-      )
-      Tempest::SessionStore.new(path: path).save(seed, identifier: "asonas.bsky.social")
+      env = { "XDG_CONFIG_HOME" => dir, "HOME" => dir, "TEMPEST_NO_LOG" => "1" }
+      block.call(env, dir)
+    end
+  end
 
-      def seed.refresh!
-        @access_jwt = "new"
-        self
-      end
+  def seed_account(env, did:, handle:, identifier: nil, access: "a", refresh: "r")
+    identifier ||= handle
+    session = Tempest::Session.new(
+      access_jwt: access,
+      refresh_jwt: refresh,
+      did: did,
+      handle: handle,
+      pds_host: "https://bsky.social",
+    )
+    FileUtils.mkdir_p(Tempest::AccountPaths.account_dir(env, did: did), mode: 0o700)
+    Tempest::SessionStore.for(env, did: did).save(session, identifier: identifier)
+    File.write(Tempest::AccountPaths.accounts_json_path(env), JSON.generate(
+      "version" => 1,
+      "default" => did,
+      "accounts" => [{
+        "did" => did,
+        "handle" => handle,
+        "identifier" => identifier,
+        "pds_host" => "https://bsky.social",
+        "added_at" => "2026-05-18T00:00:00.000000Z",
+      }],
+    ))
+  end
 
-      store = Tempest::SessionStore.new(path: path)
-      def store.load(**); end
-      store.define_singleton_method(:load) { |**_| seed }
+  def test_auth_returns_session_when_cached_session_refreshes_successfully
+    with_accounts_dir do |env, _dir|
+      seed_account(env, did: "did:plc:x", handle: "asonas.bsky.social", refresh: "old-refresh")
 
-      session = Tempest::Commands::Base.authenticate(env: {}, store: store, stderr: StringIO.new)
+      stub_request(:post, "https://bsky.social/xrpc/com.atproto.server.refreshSession")
+        .with(headers: { "Authorization" => "Bearer old-refresh" })
+        .to_return(
+          status: 200,
+          headers: { "Content-Type" => "application/json" },
+          body: { accessJwt: "new", refreshJwt: "new-refresh", did: "did:plc:x", handle: "asonas.bsky.social" }.to_json,
+        )
+
+      session = Tempest::Commands::Base.authenticate(env: env, stderr: StringIO.new)
+      refute_nil session
       assert_equal "asonas.bsky.social", session.handle
     end
   end
 
   def test_auth_returns_nil_and_writes_error_when_no_cache
-    Dir.mktmpdir do |dir|
-      store = Tempest::SessionStore.new(path: File.join(dir, "missing.json"))
+    with_accounts_dir do |env, _dir|
       err = StringIO.new
-      session = Tempest::Commands::Base.authenticate(env: {}, store: store, stderr: err)
+      session = Tempest::Commands::Base.authenticate(env: env, stderr: err)
       assert_nil session
-      assert_match(/no cached session/, err.string)
+      assert_match(/no accounts configured/, err.string)
+    end
+  end
+
+  def test_auth_returns_nil_when_unknown_user
+    with_accounts_dir do |env, _dir|
+      seed_account(env, did: "did:plc:x", handle: "asonas.bsky.social")
+      err = StringIO.new
+      session = Tempest::Commands::Base.authenticate(env: env, user: "nope.bsky", stderr: err)
+      assert_nil session
+      assert_match(/unknown user: nope.bsky/, err.string)
+    end
+  end
+
+  def test_auth_returns_nil_when_session_file_missing
+    with_accounts_dir do |env, _dir|
+      FileUtils.mkdir_p(File.dirname(Tempest::AccountPaths.accounts_json_path(env)))
+      File.write(Tempest::AccountPaths.accounts_json_path(env), JSON.generate(
+        "version" => 1,
+        "default" => "did:plc:gone",
+        "accounts" => [{
+          "did" => "did:plc:gone",
+          "handle" => "gone.bsky",
+          "identifier" => "gone.bsky",
+          "pds_host" => "https://bsky.social",
+          "added_at" => "2026-05-18T00:00:00.000000Z",
+        }],
+      ))
+      err = StringIO.new
+      session = Tempest::Commands::Base.authenticate(env: env, stderr: err)
+      assert_nil session
+      assert_match(/session for @gone.bsky missing/, err.string)
     end
   end
 
