@@ -206,13 +206,81 @@ module Tempest
         @io.flush if @io.respond_to?(:flush)
       end
 
+      # Kitty graphics escape: `\e_G<controls>;<data>\e\\`. A single avatar
+      # may be transmitted as multiple consecutive `\e_G..\e\\` chunks (each
+      # capped at CHUNK_BYTES) when the PNG is large, but each chunk is still
+      # an atomic terminal command that must not be broken by a newline.
+      KITTY_ESCAPE = /\e_G[^\e]*?\e\\/m.freeze
+      private_constant :KITTY_ESCAPE
+
       def wrap_to_cols(line)
         return [line] unless @cols && @cols.positive?
-        return [line] if line.include?("\e_G")
-        return [line] if Reline::Unicode.calculate_width(line, true) <= @cols
+        return [line] if visible_width(line) <= @cols
 
-        chunks, _ = Reline::Unicode.split_by_width(line, @cols)
-        chunks.compact.reject(&:empty?)
+        # Tokenize the line into kitty-escape blocks and plain text. Plain
+        # text is split by display width; escape blocks travel intact and
+        # contribute 0 cells to the running width (their visual footprint —
+        # 2 cells per avatar in our usage — is reserved by literal spaces in
+        # the surrounding text, see Formatter#compose).
+        parts = line.split(/(#{KITTY_ESCAPE})/)
+        chunks = []
+        current = String.new
+        current_width = 0
+
+        parts.each do |part|
+          next if part.empty?
+          if part.start_with?("\e_G")
+            current << part
+            next
+          end
+
+          remaining = part
+          until remaining.empty?
+            available = @cols - current_width
+            if available <= 0
+              chunks << current
+              current = String.new
+              current_width = 0
+              available = @cols
+            end
+
+            head, tail = take_by_display_width(remaining, available)
+            if head.empty?
+              # Next grapheme is wider than the remaining cells — flush and retry.
+              chunks << current unless current.empty?
+              current = String.new
+              current_width = 0
+              next
+            end
+
+            current << head
+            current_width += Reline::Unicode.calculate_width(head, true)
+            remaining = tail
+          end
+        end
+
+        chunks << current unless current.empty?
+        chunks
+      end
+
+      # Returns [head, tail] such that head's display width is <= max_width and
+      # head + tail == str. Walks graphemes so we don't split a CJK character
+      # across chunks.
+      def take_by_display_width(str, max_width)
+        head = String.new
+        width = 0
+        str.each_grapheme_cluster do |g|
+          w = Reline::Unicode.calculate_width(g, true)
+          break if width + w > max_width
+          head << g
+          width += w
+        end
+        [head, str.byteslice(head.bytesize, str.bytesize - head.bytesize) || ""]
+      end
+
+      def visible_width(line)
+        stripped = line.gsub(KITTY_ESCAPE, "")
+        Reline::Unicode.calculate_width(stripped, true)
       end
 
       def rerender_prompt

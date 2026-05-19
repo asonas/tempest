@@ -191,6 +191,52 @@ class TestREPLScreen < Minitest::Test
       "screen wrapping must not inject line breaks inside Kitty graphics escapes"
   end
 
+  # Posts containing a Kitty avatar must STILL be wrapped when their visible
+  # width exceeds @cols. Previously wrap_to_cols bailed out (returned the
+  # whole line untouched) whenever the line contained a Kitty escape because
+  # Reline counted the base64 bytes toward visual width. The terminal then
+  # auto-wrapped past the scrolling region, spilling text onto the prompt
+  # row and dragging the avatar placement off-position relative to its post.
+  def test_puts_wraps_long_post_with_kitty_avatar_into_multiple_chunks
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 40)
+    screen.enable
+    io.truncate(0); io.rewind
+
+    kitty_escape = "\e_Ga=T,f=100,r=1,c=2,C=1,m=0;#{"A" * 240}\e\\"
+    # Visible payload alone is ~62 cells (10 + 2 + 20 + 30); should wrap into
+    # at least two chunks at cols=40.
+    long = "[$CR] [13:06] #{kitty_escape}  @takkanm.bsky.social: " +
+      ("会社でF1の話をふられたのでマックスがアホかというはな")
+    screen.puts long
+
+    # Each chunk is preceded by move-to-last-row + clear-line; count them.
+    move_clear_pairs = io.string.scan(/\e\[23;1H\r\e\[2K/).length
+    assert_operator move_clear_pairs, :>=, 2,
+      "long avatar-bearing post must be split into multiple scrolling-region writes"
+
+    # The Kitty escape must remain intact (no newline inserted inside it).
+    graphics_escape = io.string[/\e_G.*?\e\\/m]
+    refute_nil graphics_escape
+    refute_includes graphics_escape, "\n"
+  end
+
+  # A short line that contains an avatar (e.g. "[12:58] <icon>  @ason.as: hi")
+  # must NOT be wrapped, even though the raw byte-length is enormous due to
+  # the base64 image payload.
+  def test_puts_does_not_wrap_short_post_with_kitty_avatar
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 80)
+    screen.enable
+    io.truncate(0); io.rewind
+
+    kitty_escape = "\e_Ga=T,f=100,r=1,c=2,C=1,m=0;#{"A" * 240}\e\\"
+    screen.puts "[12:58] #{kitty_escape}  @ason.as: hi"
+
+    assert_equal 1, io.string.scan(/\e\[23;1H/).length,
+      "short avatar-bearing post fits in @cols and must remain a single chunk"
+  end
+
   def test_puts_does_not_wrap_when_line_fits_in_cols
     io = FakeTTY.new
     screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 80)
