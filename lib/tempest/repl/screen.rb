@@ -19,6 +19,7 @@ module Tempest
         @rows = rows
         @cols = cols
         @enabled = false
+        @suspended = false
         @mutex = Mutex.new
         @pending_resize = nil
       end
@@ -59,10 +60,12 @@ module Tempest
         @io.print "\e[r"
         @io.flush if @io.respond_to?(:flush)
         @enabled = false
+        @suspended = true
       end
 
       def resume
         return if @enabled
+        @suspended = false
         enable
       end
 
@@ -80,6 +83,11 @@ module Tempest
       end
 
       def puts(*lines)
+        # While `:compose` hands the terminal off to $EDITOR the Jetstream
+        # thread keeps emitting events. Swallow them rather than print over
+        # the editor's screen; the cursor is persisted, so reconnect-after-
+        # exit would replay anyway if anything important was missed.
+        return if @suspended
         @mutex.synchronize do
           apply_pending_resize
           if @enabled

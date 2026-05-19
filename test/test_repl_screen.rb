@@ -116,6 +116,36 @@ class TestREPLScreen < Minitest::Test
     assert_includes io.string, "hi\n"
   end
 
+  # While `:compose` is running and $EDITOR owns the terminal, the Jetstream
+  # thread is still alive and emitting events through Screen#puts. Those
+  # writes must not leak onto the editor's screen — Screen swallows them
+  # while suspended, then continues normally after resume.
+  def test_puts_while_suspended_is_silent
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 80)
+    screen.enable
+    screen.suspend
+    io.truncate(0); io.rewind
+
+    screen.puts "[13:26] @uzakin.bsky.social: liked @keireit.bsky.social's post"
+
+    assert_empty io.string,
+      "puts during suspend must not write to the terminal (editor owns it)"
+  end
+
+  def test_puts_after_resume_writes_normally_again
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 80)
+    screen.enable
+    screen.suspend
+    screen.resume
+    io.truncate(0); io.rewind
+
+    screen.puts "back online"
+
+    assert_includes io.string, "back online"
+  end
+
   # Without locking, concurrent writers can interleave the escape sequences
   # emitted by insert_above_prompt; in a real terminal one thread's \r\e[2K can
   # land between another thread's text-write and \n, clobbering the line that
