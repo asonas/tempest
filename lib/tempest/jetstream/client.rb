@@ -55,7 +55,13 @@ module Tempest
       end
 
       def each_message(url)
-        Async do |task|
+        # `finished: false` makes Async::Task call `@promise.suppress_warnings!`
+        # so that connect failures (DNS errors after offline wake-from-sleep,
+        # TCP resets, TLS handshake errors) don't trigger Console.logger.warn
+        # with "Task may have ended with unhandled exception." plus a full
+        # backtrace. The exception still propagates via `.wait`; the
+        # StreamManager's reconnect loop already handles it cleanly.
+        Async(finished: false) do
           endpoint = Async::HTTP::Endpoint.parse(url)
           Async::WebSocket::Client.connect(endpoint) do |connection|
             while (message = connection.read)
