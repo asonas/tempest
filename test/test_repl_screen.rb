@@ -14,9 +14,9 @@ class TestREPLScreen < Minitest::Test
     screen = Tempest::REPL::Screen.new(io: io, rows: 24)
     screen.enable
 
-    # DECSTBM (CSI 1;23 r) + cursor to bottom (CSI 24;1 H)
-    assert_includes io.string, "\e[1;23r"
-    assert_includes io.string, "\e[24;1H"
+    # Two prompt rows reserved at the bottom: DECSTBM 1..22, prompt parks on row 23.
+    assert_includes io.string, "\e[1;22r"
+    assert_includes io.string, "\e[23;1H"
     assert screen.enabled?
   end
 
@@ -78,8 +78,8 @@ class TestREPLScreen < Minitest::Test
 
     screen.resume
 
-    assert_includes io.string, "\e[1;23r"
-    assert_includes io.string, "\e[24;1H"
+    assert_includes io.string, "\e[1;22r"
+    assert_includes io.string, "\e[23;1H"
     assert screen.enabled?
   end
 
@@ -101,7 +101,7 @@ class TestREPLScreen < Minitest::Test
 
     output = io.string
     assert_includes output, "\e7"               # save cursor
-    assert_includes output, "\e[23;1H"          # move to last scrolling-region line
+    assert_includes output, "\e[22;1H"          # move to last scrolling-region line
     assert_includes output, "hello"
     assert_includes output, "\e8"               # restore cursor
   end
@@ -202,7 +202,7 @@ class TestREPLScreen < Minitest::Test
     assert_includes output, "KLMNOPQRST"
     # Each chunk should be preceded by a move-to-last-row and a clear-line, so
     # the terminal scrolls the region instead of spilling onto the prompt row.
-    move_clear_pairs = output.scan(/\e\[23;1H\r\e\[2K/).length
+    move_clear_pairs = output.scan(/\e\[22;1H\r\e\[2K/).length
     assert_operator move_clear_pairs, :>=, 2
   end
 
@@ -241,7 +241,7 @@ class TestREPLScreen < Minitest::Test
     screen.puts long
 
     # Each chunk is preceded by move-to-last-row + clear-line; count them.
-    move_clear_pairs = io.string.scan(/\e\[23;1H\r\e\[2K/).length
+    move_clear_pairs = io.string.scan(/\e\[22;1H\r\e\[2K/).length
     assert_operator move_clear_pairs, :>=, 2,
       "long avatar-bearing post must be split into multiple scrolling-region writes"
 
@@ -263,7 +263,7 @@ class TestREPLScreen < Minitest::Test
     kitty_escape = "\e_Ga=T,f=100,r=1,c=2,C=1,m=0;#{"A" * 240}\e\\"
     screen.puts "[12:58] #{kitty_escape}  @ason.as: hi"
 
-    assert_equal 1, io.string.scan(/\e\[23;1H/).length,
+    assert_equal 1, io.string.scan(/\e\[22;1H/).length,
       "short avatar-bearing post fits in @cols and must remain a single chunk"
   end
 
@@ -274,7 +274,7 @@ class TestREPLScreen < Minitest::Test
     io.truncate(0); io.rewind
 
     screen.puts "hello"
-    assert_equal 1, io.string.scan(/\e\[23;1H/).length
+    assert_equal 1, io.string.scan(/\e\[22;1H/).length
   end
 
   def test_puts_wraps_cjk_lines_using_display_width_not_char_count
@@ -285,7 +285,7 @@ class TestREPLScreen < Minitest::Test
 
     # Each CJK char is width 2; 8 chars = width 16 > cols 10, so it must wrap.
     screen.puts "日本語テキスト!"
-    assert_operator io.string.scan(/\e\[23;1H/).length, :>=, 2
+    assert_operator io.string.scan(/\e\[22;1H/).length, :>=, 2
   end
 
   # When the terminal is resized (SIGWINCH), the scrolling region we set at
@@ -302,12 +302,12 @@ class TestREPLScreen < Minitest::Test
     screen.puts "after-resize"
 
     output = io.string
-    # New scrolling region: rows 1..29, prompt parked on row 30.
-    assert_includes output, "\e[1;29r"
-    assert_includes output, "\e[30;1H"
-    # The inserted line targets the new bottom-of-region row (29), not 23.
+    # New scrolling region: rows 1..28, prompt area parked on row 29 (2 rows reserved).
+    assert_includes output, "\e[1;28r"
     assert_includes output, "\e[29;1H"
-    refute_includes output, "\e[23;1H"
+    # The inserted line targets the new bottom-of-region row (28), not 22.
+    assert_includes output, "\e[28;1H"
+    refute_includes output, "\e[22;1H"
   end
 
   # cols matters too: stale @cols makes wrap_to_cols split wide lines into
@@ -325,7 +325,7 @@ class TestREPLScreen < Minitest::Test
     screen.puts long
 
     output = io.string
-    assert_equal 1, output.scan(/\e\[23;1H/).length,
+    assert_equal 1, output.scan(/\e\[22;1H/).length,
       "expected exactly one move-to-bottom because the line fits in 40 cols"
     assert_includes output, long
   end
@@ -341,7 +341,7 @@ class TestREPLScreen < Minitest::Test
     screen.notify_resize(rows: 24, cols: 80)
     screen.puts "hi"
 
-    refute_includes io.string, "\e[1;23r",
+    refute_includes io.string, "\e[1;22r",
       "must not reissue DECSTBM when nothing changed"
   end
 
@@ -352,6 +352,38 @@ class TestREPLScreen < Minitest::Test
     io = FakeTTY.new
     screen = Tempest::REPL::Screen.new(io: io, rows: 24, cols: 80)
     screen.notify_resize(rows: 30, cols: 100)
+
+    assert_empty io.string
+  end
+
+  # Reline doesn't clean up the wrap row when a long input wraps across the
+  # reserved prompt area. prepare_prompt is called by the Runner before each
+  # readline so leftover characters on the lower prompt row don't leak into
+  # the next input.
+  def test_prepare_prompt_clears_reserved_rows_and_parks_cursor
+    io = FakeTTY.new
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24)
+    screen.enable
+    io.truncate(0); io.rewind
+
+    screen.prepare_prompt
+
+    output = io.string
+    # Both reserved prompt rows (23 and 24) get a move + clear-line, then the
+    # cursor is parked back on row 23 (the top of the prompt area).
+    assert_includes output, "\e[23;1H"
+    assert_includes output, "\e[24;1H"
+    assert_includes output, "\r\e[2K"
+    assert output.end_with?("\e[23;1H") ||
+           output.include?("\e[23;1H\r\e[2K\e[24;1H\r\e[2K\e[23;1H"),
+      "cursor must end up parked on the first prompt row"
+  end
+
+  def test_prepare_prompt_is_a_noop_when_screen_is_disabled
+    io = StringIO.new # not a tty
+    screen = Tempest::REPL::Screen.new(io: io, rows: 24)
+
+    screen.prepare_prompt
 
     assert_empty io.string
   end

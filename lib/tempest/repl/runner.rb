@@ -127,6 +127,7 @@ module Tempest
       private
 
       def read_line
+        @output.prepare_prompt if @output.respond_to?(:prepare_prompt)
         @input.readline(PROMPT)
       rescue Interrupt
         nil

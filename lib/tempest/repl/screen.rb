@@ -14,6 +14,13 @@ module Tempest
     #   CSI row;col H     move cursor
     #   ESC 7 / ESC 8     save/restore cursor (DECSC/DECRC)
     class Screen
+      # Number of bottom rows reserved for the prompt. Reline may wrap a long
+      # input across multiple display rows; without reserving those rows below
+      # the DECSTBM region the wrap would emit \n past the bottom margin and
+      # scroll the timeline off-screen. Two rows is the common case for a
+      # single-wrap post.
+      PROMPT_ROWS = 2
+
       def initialize(io:, rows: nil, cols: nil)
         @io = io
         @rows = rows
@@ -27,12 +34,12 @@ module Tempest
       def enable
         return unless @io.respond_to?(:tty?) && @io.tty?
         rows = @rows || detect_rows
-        return unless rows && rows >= 4
+        return unless rows && rows >= PROMPT_ROWS + 3
 
         @rows = rows
         @cols ||= detect_cols
-        @io.print "\e[1;#{rows - 1}r"   # scrolling region: rows 1..rows-1
-        @io.print "\e[#{rows};1H"        # park cursor on the final row (prompt)
+        @io.print "\e[1;#{rows - PROMPT_ROWS}r" # scrolling region: rows 1..rows-PROMPT_ROWS
+        @io.print "\e[#{prompt_row};1H"          # park cursor on the first prompt row
         @io.flush if @io.respond_to?(:flush)
         @enabled = true
         install_resize_trap
@@ -71,6 +78,22 @@ module Tempest
 
       def enabled?
         @enabled
+      end
+
+      # Clear the rows reserved for the prompt and re-park the cursor on the
+      # first prompt row. Called by the REPL right before each readline so a
+      # previous wrapped input doesn't leave residue on the lower prompt rows.
+      def prepare_prompt
+        return unless @enabled
+        @mutex.synchronize do
+          apply_pending_resize
+          PROMPT_ROWS.times do |i|
+            @io.print "\e[#{prompt_row + i};1H"
+            @io.print "\r\e[2K"
+          end
+          @io.print "\e[#{prompt_row};1H"
+          @io.flush if @io.respond_to?(:flush)
+        end
       end
 
       # SIGWINCH hook. Trap handlers in Ruby are restricted (can't reliably
@@ -133,6 +156,12 @@ module Tempest
 
       private
 
+      # The first (top) row of the prompt area. Reline draws the prompt here
+      # and may wrap downward into subsequent reserved rows.
+      def prompt_row
+        @rows - PROMPT_ROWS + 1
+      end
+
       # Caller must hold @mutex. Re-issues DECSTBM and re-parks the cursor on
       # the new prompt row when winsize actually changed; cheap no-op when it
       # didn't (some terminals send spurious WINCHes on focus changes).
@@ -150,8 +179,8 @@ module Tempest
         @cols = new_cols
         return unless @enabled
 
-        @io.print "\e[1;#{@rows - 1}r"
-        @io.print "\e[#{@rows};1H"
+        @io.print "\e[1;#{@rows - PROMPT_ROWS}r"
+        @io.print "\e[#{prompt_row};1H"
         @io.flush if @io.respond_to?(:flush)
       end
 
@@ -203,7 +232,7 @@ module Tempest
       # cleanly.
       def insert_above_prompt(line)
         chunks = wrap_to_cols(line)
-        bottom_of_region = @rows - 1
+        bottom_of_region = @rows - PROMPT_ROWS
         @io.print "\e7"                       # save cursor
         chunks.each do |chunk|
           @io.print "\e[#{bottom_of_region};1H" # move to last row of scrolling region
