@@ -21,6 +21,22 @@ module Tempest
       DIM = "\e[2m".freeze
       HASHTAG_BLUE = "\e[38;5;110m".freeze
 
+      # Palette of ANSI 256-color codes used to colorize id vars ($AA, $LA …).
+      # Hand-picked across the hue wheel for readability on dark backgrounds,
+      # avoiding the cyan (time), green (handle), and blue-110 (hashtag)
+      # already used elsewhere. Entries stay within the 6x6x6 cube's middle
+      # bands (rgb components mostly in 3..4) so the colors read as muted
+      # rather than saturated neon — id vars sit beside the post text and
+      # shouldn't fight it for attention. Order is the hue-sorted set rotated
+      # by step 13 (coprime with 24), so consecutive palette indices land on
+      # near-opposite hues; combined with var_index this keeps adjacent vars
+      # ($AY/$AZ/$BA …) visibly distinct.
+      VAR_PALETTE = [
+        167, 115, 138, 109, 173, 67,  137, 97,
+        186, 140, 150, 139, 108, 174, 116, 175,
+        117, 180, 103, 179, 146, 143, 176, 114,
+      ].freeze
+
       HASHTAG_PATTERN = /#[[:alnum:]_]+/.freeze
       URL_PATTERN = %r{https?://[^\s]+}.freeze
       DECORATE_PATTERN = Regexp.union(URL_PATTERN, HASHTAG_PATTERN).freeze
@@ -114,7 +130,7 @@ module Tempest
         var = registry&.var_for_uri(subject_uri)
         return label unless var
 
-        bracket = Formatter.color ? "#{DIM}[#{var}]#{RESET}" : "[#{var}]"
+        bracket = Formatter.color ? "[#{colorize_var(var)}]" : "[#{var}]"
         "#{label} #{bracket}"
       end
 
@@ -133,7 +149,7 @@ module Tempest
         return body unless registry
 
         parent_var = registry.var_for_uri(reply_parent_uri)
-        marker = parent_var ? "↪#{parent_var} " : "↪ "
+        marker = parent_var ? "↪#{colorize_var(parent_var)} " : "↪ "
         "#{marker}#{body}"
       end
 
@@ -158,7 +174,7 @@ module Tempest
         urls = URI.extract(text, ["http", "https"]).uniq
         urls.each do |url|
           var = registry.assign_url(url)
-          text = text.sub(url, "#{url} (#{var})")
+          text = text.sub(url, "#{url} (#{colorize_var(var)})")
         end
         text
       end
@@ -175,7 +191,7 @@ module Tempest
         replacements = valid.map do |facet|
           var = registry.assign_url(facet.uri)
           domain = host_of(facet.uri) || facet.uri
-          [facet, "[#{domain} #{var}]"]
+          [facet, "[#{domain} #{colorize_var(var)}]"]
         end
 
         # Apply substitutions in reverse byte order so earlier ranges remain valid.
@@ -239,7 +255,27 @@ module Tempest
       end
 
       def id_label(var)
-        Formatter.color ? "#{DIM}[#{var}]#{RESET} " : "[#{var}] "
+        Formatter.color ? "[#{colorize_var(var)}] " : "[#{var}] "
+      end
+
+      # Returns a deterministic ANSI 256-color escape for the given var.
+      # Indexing by the two-letter id (var_index) avoids the byte-sum
+      # collisions that made $AZ and $BA share the same palette slot.
+      def colorize_var(var)
+        return var unless Formatter.color
+        code = VAR_PALETTE[var_index(var) % VAR_PALETTE.size]
+        "\e[38;5;#{code}m#{var}#{RESET}"
+      end
+
+      # Converts the two-letter portion of "$XY" into a base-26 index so
+      # consecutive vars always map to consecutive palette slots. Falls back
+      # to 0 for malformed vars; the palette rotation handles the rest.
+      def var_index(var)
+        pair = var.to_s.sub(/\A\$/, "")
+        return 0 if pair.length < 2
+        high = pair[0].ord - "A".ord
+        low = pair[1].ord - "A".ord
+        high * 26 + low
       end
 
       def handle_label(handle)

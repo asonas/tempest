@@ -706,4 +706,46 @@ class TestREPLFormatter < Minitest::Test
     line = Tempest::REPL::Formatter.event_line(event, resolver: resolver)
     assert_includes line, "📷 live shot"
   end
+
+  def test_post_line_colors_id_var_with_256_color_escape_when_color_on
+    Tempest::REPL::Formatter.color = true
+    post = Tempest::Post.new(
+      uri: "at://x/1", cid: "bafy",
+      handle: "alice.bsky.social", display_name: nil,
+      text: "hi", created_at: nil,
+    )
+    registry = Tempest::REPL::Registry.new
+
+    line = Tempest::REPL::Formatter.post_line(post, registry: registry)
+    assert_match(/\[\e\[38;5;\d+m\$AA\e\[0m\]/, line)
+  end
+
+  def test_consecutive_id_vars_use_distinct_colors_when_color_on
+    Tempest::REPL::Formatter.color = true
+    registry = Tempest::REPL::Registry.new
+    lines = 3.times.map do |i|
+      post = Tempest::Post.new(
+        uri: "at://x/#{i}", cid: "bafy#{i}",
+        handle: "alice.bsky.social", display_name: nil,
+        text: "p#{i}", created_at: nil,
+      )
+      Tempest::REPL::Formatter.post_line(post, registry: registry)
+    end
+    codes = lines.map { |l| l[/38;5;(\d+)/, 1] }
+    assert_equal codes.size, codes.uniq.size,
+                 "expected distinct colors for consecutive vars, got #{codes.inspect}"
+  end
+
+  def test_url_id_var_is_colorized_inside_parentheses_when_color_on
+    Tempest::REPL::Formatter.color = true
+    post = Tempest::Post.new(
+      uri: "at://x/1", cid: "bafy",
+      handle: "alice.bsky.social", display_name: nil,
+      text: "see https://example.com", created_at: nil,
+    )
+    registry = Tempest::REPL::Registry.new
+
+    line = Tempest::REPL::Formatter.post_line(post, registry: registry)
+    assert_match(/\(\e\[38;5;\d+m\$LA\e\[0m\)/, line)
+  end
 end
