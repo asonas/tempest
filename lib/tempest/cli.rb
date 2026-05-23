@@ -1,4 +1,5 @@
 require_relative "../tempest"
+require_relative "warning_filter"
 require_relative "commands/tui"
 require_relative "commands/base"
 require_relative "commands/whoami"
@@ -10,6 +11,8 @@ require_relative "commands/accounts"
 require_relative "debug_log"
 require_relative "deprecated_envs"
 require_relative "xrpc_client"
+
+Tempest::WarningFilter.install!
 
 module Tempest
   module CLI
