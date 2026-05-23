@@ -193,6 +193,43 @@ class TestPostCreate < Minitest::Test
     refute body[:record].key?("reply")
   end
 
+  def test_create_attaches_mention_facet_for_handle_in_text
+    client = FakeClient.new("uri" => "at://x")
+    def client.get(_nsid, query:)
+      raise "unexpected actor" unless query["actor"] == "alice.bsky.social"
+      { "did" => "did:plc:alice", "handle" => "alice.bsky.social" }
+    end
+    Tempest::Post.create(client, did: "did:plc:abc", text: "hi @alice.bsky.social")
+
+    _, body = client.calls.first
+    facets = body[:record]["facets"]
+    assert_equal 1, facets.length
+    facet = facets.first
+    expected_start = "hi ".bytesize
+    expected_end   = expected_start + "@alice.bsky.social".bytesize
+    assert_equal expected_start, facet["index"]["byteStart"]
+    assert_equal expected_end,   facet["index"]["byteEnd"]
+    assert_equal "app.bsky.richtext.facet#mention", facet["features"].first["$type"]
+    assert_equal "did:plc:alice", facet["features"].first["did"]
+  end
+
+  def test_create_merges_mention_and_link_facets_in_byte_order
+    client = FakeClient.new("uri" => "at://x")
+    def client.get(_nsid, query:)
+      { "did" => "did:plc:alice", "handle" => query["actor"] }
+    end
+    text = "@alice.bsky.social check https://example.com"
+    Tempest::Post.create(client, did: "did:plc:abc", text: text)
+
+    _, body = client.calls.first
+    facets = body[:record]["facets"]
+    assert_equal 2, facets.length
+    assert facets[0]["index"]["byteStart"] < facets[1]["index"]["byteStart"]
+    types = facets.map { |f| f["features"].first["$type"] }
+    assert_includes types, "app.bsky.richtext.facet#mention"
+    assert_includes types, "app.bsky.richtext.facet#link"
+  end
+
   def test_create_attaches_link_facet_for_url_in_text
     client = FakeClient.new("uri" => "at://x")
     Tempest::Post.create(client, did: "did:plc:abc", text: "see https://example.com")
@@ -341,6 +378,79 @@ class TestPostFromFeedView < Minitest::Test
     }
     post = Tempest::Post.from_feed_view(raw)
     assert_nil post.reply_parent_uri
+  end
+end
+
+class TestPostDetectMentionFacets < Minitest::Test
+  class FakeClient
+    attr_reader :get_calls
+    def initialize(profiles: {})
+      @profiles = profiles
+      @get_calls = []
+    end
+    def get(nsid, query: nil)
+      @get_calls << [nsid, query]
+      raise "unexpected #{nsid}" unless nsid == "app.bsky.actor.getProfile"
+      actor = query["actor"]
+      raise Tempest::APIError.new(400, "InvalidRequest") unless @profiles.key?(actor)
+      { "did" => @profiles.fetch(actor), "handle" => actor }
+    end
+  end
+
+  def test_resolves_single_mention_to_mention_facet
+    client = FakeClient.new(profiles: { "alice.bsky.social" => "did:plc:alice" })
+    text = "@alice.bsky.social hi"
+    facets = Tempest::Post.detect_mention_facets(text, client: client)
+
+    assert_equal 1, facets.length
+    facet = facets.first
+    assert_equal 0, facet["index"]["byteStart"]
+    assert_equal "@alice.bsky.social".bytesize, facet["index"]["byteEnd"]
+    feature = facet["features"].first
+    assert_equal "app.bsky.richtext.facet#mention", feature["$type"]
+    assert_equal "did:plc:alice", feature["did"]
+  end
+
+  def test_detects_mention_after_whitespace_or_open_bracket
+    client = FakeClient.new(profiles: {
+      "alice.bsky.social" => "did:plc:alice",
+      "bob.bsky.social"   => "did:plc:bob",
+    })
+    text = "hi @alice.bsky.social (@bob.bsky.social)"
+    facets = Tempest::Post.detect_mention_facets(text, client: client)
+    assert_equal 2, facets.length
+    assert_equal "did:plc:alice", facets[0]["features"].first["did"]
+    assert_equal "did:plc:bob",   facets[1]["features"].first["did"]
+  end
+
+  def test_uses_byte_offsets_after_multibyte_text
+    client = FakeClient.new(profiles: { "alice.bsky.social" => "did:plc:alice" })
+    text = "見て @alice.bsky.social ね"
+    facets = Tempest::Post.detect_mention_facets(text, client: client)
+    expected_start = "見て ".bytesize
+    expected_end = expected_start + "@alice.bsky.social".bytesize
+    assert_equal expected_start, facets.first["index"]["byteStart"]
+    assert_equal expected_end,   facets.first["index"]["byteEnd"]
+  end
+
+  def test_skips_mention_when_handle_does_not_resolve
+    client = FakeClient.new(profiles: {})  # no profiles known
+    facets = Tempest::Post.detect_mention_facets("@ghost.bsky.social hi", client: client)
+    assert_empty facets
+  end
+
+  def test_skips_get_profile_when_text_has_no_at_sign
+    client = FakeClient.new(profiles: {})
+    facets = Tempest::Post.detect_mention_facets("plain text", client: client)
+    assert_empty facets
+    assert_empty client.get_calls
+  end
+
+  def test_ignores_bare_at_without_domain
+    client = FakeClient.new(profiles: {})
+    facets = Tempest::Post.detect_mention_facets("email me at @work tomorrow", client: client)
+    assert_empty facets
+    assert_empty client.get_calls
   end
 end
 

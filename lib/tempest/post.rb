@@ -66,8 +66,9 @@ module Tempest
 
       record["langs"] = langs if langs && !langs.empty?
 
-      link_facets = detect_link_facets(text)
-      record["facets"] = link_facets unless link_facets.empty?
+      facets = detect_mention_facets(text, client: client) + detect_link_facets(text)
+      facets.sort_by! { |f| f["index"]["byteStart"] }
+      record["facets"] = facets unless facets.empty?
 
       client.post(
         "com.atproto.repo.createRecord",
@@ -135,6 +136,45 @@ module Tempest
       rkey = match[2]
       profile = handle && !handle.empty? ? handle : did
       "https://bsky.app/profile/#{profile}/post/#{rkey}"
+    end
+
+    # Scans `text` for `@handle` mentions, resolves each to a DID via
+    # `app.bsky.actor.getProfile`, and builds AT Protocol mention facets.
+    # Without this, the AppView shows the mention as plain text instead of
+    # linking to the profile or generating a notification. Handles that fail
+    # to resolve are left as plain text (no facet added).
+    MENTION_PATTERN = /(?:\A|[\s(\[])@([a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/n
+
+    def self.detect_mention_facets(text, client:)
+      return [] if text.nil? || text.empty?
+      return [] unless text.include?("@")
+
+      bytes = text.b
+      facets = []
+      pos = 0
+      while (match = MENTION_PATTERN.match(bytes, pos))
+        handle_byte_start = match.begin(1) - 1
+        handle_byte_end = match.end(1)
+        handle = match[1].dup.force_encoding(Encoding::UTF_8)
+        did = resolve_handle_did(handle, client: client)
+        if did
+          facets << {
+            "index" => { "byteStart" => handle_byte_start, "byteEnd" => handle_byte_end },
+            "features" => [
+              { "$type" => "app.bsky.richtext.facet#mention", "did" => did },
+            ],
+          }
+        end
+        pos = handle_byte_end
+      end
+      facets
+    end
+
+    def self.resolve_handle_did(handle, client:)
+      response = client.get("app.bsky.actor.getProfile", query: { "actor" => handle })
+      response.is_a?(Hash) ? response["did"] : nil
+    rescue Tempest::APIError
+      nil
     end
 
     # Scans `text` for bare URLs and builds AT Protocol link facets pointing
