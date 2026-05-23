@@ -118,6 +118,7 @@ class TestCommandsPost < Minitest::Test
         "com.atproto.repo.getRecord" => {
           "uri" => "at://did:plc:bob/app.bsky.feed.post/par",
           "cid" => "bafyparent",
+          "value" => { "$type" => "app.bsky.feed.post", "text" => "hi" },
         },
       },
     )
@@ -133,8 +134,46 @@ class TestCommandsPost < Minitest::Test
     assert_equal "par", get_call[2]["rkey"]
 
     _, _, body = client.calls.find { |c| c.first == :post }
-    assert_equal "at://did:plc:bob/app.bsky.feed.post/par",
-                 body[:record]["reply"]["parent"]["uri"]
-    assert_equal "bafyparent", body[:record]["reply"]["parent"]["cid"]
+    reply = body[:record]["reply"]
+    assert_equal "at://did:plc:bob/app.bsky.feed.post/par", reply["parent"]["uri"]
+    assert_equal "bafyparent", reply["parent"]["cid"]
+    # Parent is a top-level post (no reply.root in its record), so the new
+    # reply's root collapses onto the parent itself.
+    assert_equal "at://did:plc:bob/app.bsky.feed.post/par", reply["root"]["uri"]
+    assert_equal "bafyparent", reply["root"]["cid"]
+  end
+
+  def test_reply_to_thread_member_inherits_root_from_parents_reply_root
+    client = FakeXRPCClient.new(
+      post_response: { "uri" => "at://x", "cid" => "bafy" },
+      get_responses: {
+        "com.atproto.repo.getRecord" => {
+          "uri" => "at://did:plc:bob/app.bsky.feed.post/par",
+          "cid" => "bafyparent",
+          "value" => {
+            "$type" => "app.bsky.feed.post",
+            "text" => "mid-thread",
+            "reply" => {
+              "root"   => { "uri" => "at://did:plc:carol/app.bsky.feed.post/rt", "cid" => "bafyroot" },
+              "parent" => { "uri" => "at://did:plc:dave/app.bsky.feed.post/mid", "cid" => "bafymid" },
+            },
+          },
+        },
+      },
+    )
+    Tempest::Commands::Post.call(
+      argv: ["--reply-to", "at://did:plc:bob/app.bsky.feed.post/par", "ack"],
+      session: fake_session, client: client,
+      stdout: StringIO.new, stderr: StringIO.new, stdin: StringIO.new,
+    )
+
+    _, _, body = client.calls.find { |c| c.first == :post }
+    reply = body[:record]["reply"]
+    # Root is preserved from the conversation, not collapsed onto the parent.
+    assert_equal "at://did:plc:carol/app.bsky.feed.post/rt", reply["root"]["uri"]
+    assert_equal "bafyroot", reply["root"]["cid"]
+    # Parent is the post we directly replied to.
+    assert_equal "at://did:plc:bob/app.bsky.feed.post/par", reply["parent"]["uri"]
+    assert_equal "bafyparent", reply["parent"]["cid"]
   end
 end

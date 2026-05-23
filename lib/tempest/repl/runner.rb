@@ -202,11 +202,12 @@ module Tempest
           @output.puts "usage: $XX <text>"
           return
         end
+        reply_refs = Post.fetch_reply_refs(@client, reply_uri_for(target))
         response = Post.create(
           @client,
           did: @session.did,
           text: body,
-          reply: { uri: reply_uri_for(target), cid: target.cid },
+          reply: reply_refs,
         )
         @output.puts "posted: #{response["uri"]}"
       rescue Tempest::AuthenticationError => e

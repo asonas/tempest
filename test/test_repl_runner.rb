@@ -30,6 +30,13 @@ class TestREPLRunner < Minitest::Test
     end
 
     def get(nsid, query: nil)
+      if nsid == "com.atproto.repo.getRecord"
+        return {
+          "uri" => "at://did:plc:a/app.bsky.feed.post/1",
+          "cid" => "bafy",
+          "value" => { "$type" => "app.bsky.feed.post", "text" => "hi" },
+        }
+      end
       @timeline_calls += 1 if nsid == "app.bsky.feed.getTimeline"
       {
         "feed" => [

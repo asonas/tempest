@@ -160,22 +160,24 @@ class TestPostCreate < Minitest::Test
     assert_match(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\z/, body[:record]["createdAt"])
   end
 
-  def test_create_with_reply_includes_root_and_parent_equal_to_target
+  def test_create_with_reply_writes_root_and_parent_from_refs
     client = FakeClient.new("uri" => "at://did:plc:abc/app.bsky.feed.post/zzz")
 
     Tempest::Post.create(
       client,
       did: "did:plc:abc",
       text: "@bob hi",
-      reply: { uri: "at://did:plc:bob/app.bsky.feed.post/parent",
-               cid: "bafyparent" },
+      reply: {
+        root:   { uri: "at://did:plc:carol/app.bsky.feed.post/root", cid: "bafyroot" },
+        parent: { uri: "at://did:plc:bob/app.bsky.feed.post/parent", cid: "bafyparent" },
+      },
       created_at: "2026-05-15T00:00:00.000Z",
     )
 
     _, body = client.calls.first
     record = body[:record]
     assert_equal(
-      { "uri" => "at://did:plc:bob/app.bsky.feed.post/parent", "cid" => "bafyparent" },
+      { "uri" => "at://did:plc:carol/app.bsky.feed.post/root", "cid" => "bafyroot" },
       record["reply"]["root"],
     )
     assert_equal(
@@ -339,6 +341,68 @@ class TestPostFromFeedView < Minitest::Test
     }
     post = Tempest::Post.from_feed_view(raw)
     assert_nil post.reply_parent_uri
+  end
+end
+
+class TestPostFetchReplyRefs < Minitest::Test
+  class FakeClient
+    attr_reader :queries
+    def initialize(record)
+      @record = record
+      @queries = []
+    end
+    def get(nsid, query: nil)
+      raise "unexpected #{nsid}" unless nsid == "com.atproto.repo.getRecord"
+      @queries << query
+      @record
+    end
+  end
+
+  def test_returns_parent_as_root_when_parent_is_top_level
+    record = {
+      "uri" => "at://did:plc:bob/app.bsky.feed.post/par",
+      "cid" => "bafyparent",
+      "value" => { "$type" => "app.bsky.feed.post", "text" => "hi" },
+    }
+    refs = Tempest::Post.fetch_reply_refs(FakeClient.new(record),
+                                          "at://did:plc:bob/app.bsky.feed.post/par")
+    expected = { uri: "at://did:plc:bob/app.bsky.feed.post/par", cid: "bafyparent" }
+    assert_equal expected, refs[:root]
+    assert_equal expected, refs[:parent]
+  end
+
+  def test_inherits_root_when_parent_is_itself_a_reply
+    record = {
+      "uri" => "at://did:plc:bob/app.bsky.feed.post/par",
+      "cid" => "bafyparent",
+      "value" => {
+        "$type" => "app.bsky.feed.post",
+        "reply" => {
+          "root"   => { "uri" => "at://did:plc:carol/app.bsky.feed.post/rt", "cid" => "bafyroot" },
+          "parent" => { "uri" => "at://did:plc:dave/app.bsky.feed.post/mid", "cid" => "bafymid" },
+        },
+      },
+    }
+    refs = Tempest::Post.fetch_reply_refs(FakeClient.new(record),
+                                          "at://did:plc:bob/app.bsky.feed.post/par")
+    assert_equal({ uri: "at://did:plc:carol/app.bsky.feed.post/rt", cid: "bafyroot" }, refs[:root])
+    assert_equal({ uri: "at://did:plc:bob/app.bsky.feed.post/par", cid: "bafyparent" }, refs[:parent])
+  end
+
+  def test_passes_repo_collection_rkey_to_get_record
+    record = { "uri" => "u", "cid" => "c", "value" => {} }
+    client = FakeClient.new(record)
+    Tempest::Post.fetch_reply_refs(client, "at://did:plc:bob/app.bsky.feed.post/par")
+    query = client.queries.first
+    assert_equal "did:plc:bob", query["repo"]
+    assert_equal "app.bsky.feed.post", query["collection"]
+    assert_equal "par", query["rkey"]
+  end
+
+  def test_raises_on_malformed_uri
+    assert_raises(ArgumentError) do
+      Tempest::Post.fetch_reply_refs(FakeClient.new({}), "not-an-at-uri")
+    end
   end
 end
 

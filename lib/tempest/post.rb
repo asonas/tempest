@@ -47,10 +47,9 @@ module Tempest
     end
 
     # Compose a record for com.atproto.repo.createRecord (app.bsky.feed.post).
-    # When `reply` is provided, both root and parent are set to the same
-    # target. This is correct for top-level replies and a known v1 trade-off
-    # for replies deeper in a thread (AppView will nest the reply under
-    # `parent` instead of the original conversation root).
+    # `reply` is `{ root: {uri:, cid:}, parent: {uri:, cid:} }` so callers can
+    # preserve the original conversation root when replying deep in a thread.
+    # Use `fetch_reply_refs` to build this from a parent URI.
     def self.create(client, did:, text:, reply: nil, langs: nil,
                     created_at: Time.now.utc.strftime("%Y-%m-%dT%H:%M:%S.%LZ"))
       record = {
@@ -59,8 +58,10 @@ module Tempest
         "createdAt" => created_at,
       }
       if reply
-        ref = { "uri" => reply[:uri], "cid" => reply[:cid] }
-        record["reply"] = { "root" => ref, "parent" => ref }
+        record["reply"] = {
+          "root"   => { "uri" => reply[:root][:uri],   "cid" => reply[:root][:cid] },
+          "parent" => { "uri" => reply[:parent][:uri], "cid" => reply[:parent][:cid] },
+        }
       end
 
       record["langs"] = langs if langs && !langs.empty?
@@ -96,6 +97,30 @@ module Tempest
           record: record,
         },
       )
+    end
+
+    # Looks up `parent_uri` via com.atproto.repo.getRecord and returns reply
+    # refs that preserve the conversation root. If the parent is itself a
+    # reply, the parent's `reply.root` is reused so the new reply joins the
+    # original thread. If the parent is a top-level post, the parent stands
+    # in as the root (root and parent point at the same record).
+    def self.fetch_reply_refs(client, parent_uri)
+      match = parent_uri.to_s.match(%r{\Aat://([^/]+)/([^/]+)/(.+)\z})
+      raise ArgumentError, "invalid at:// URI: #{parent_uri.inspect}" unless match
+
+      record = client.get(
+        "com.atproto.repo.getRecord",
+        query: { "repo" => match[1], "collection" => match[2], "rkey" => match[3] },
+      )
+      parent_ref = { uri: record.fetch("uri"), cid: record.fetch("cid") }
+      parent_root = record.dig("value", "reply", "root")
+      root_ref =
+        if parent_root.is_a?(Hash) && parent_root["uri"] && parent_root["cid"]
+          { uri: parent_root["uri"], cid: parent_root["cid"] }
+        else
+          parent_ref
+        end
+      { root: root_ref, parent: parent_ref }
     end
 
     # Builds a bsky.app web URL from an at:// post URI. `handle` is preferred
