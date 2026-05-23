@@ -98,6 +98,20 @@ module Tempest
       )
     end
 
+    # Builds a bsky.app web URL from an at:// post URI. `handle` is preferred
+    # because human-readable URLs are nicer for sharing; when missing or empty
+    # the DID is used (bsky.app accepts both forms in the profile path).
+    # Returns nil when the URI is not an `app.bsky.feed.post` record.
+    def self.bsky_url(at_uri:, handle: nil)
+      match = at_uri.to_s.match(%r{\Aat://([^/]+)/app\.bsky\.feed\.post/(.+)\z})
+      return nil unless match
+
+      did = match[1]
+      rkey = match[2]
+      profile = handle && !handle.empty? ? handle : did
+      "https://bsky.app/profile/#{profile}/post/#{rkey}"
+    end
+
     # Scans `text` for bare URLs and builds AT Protocol link facets pointing
     # at each match. Without this, the AppView treats URLs as plain text and
     # does not render them as clickable links.

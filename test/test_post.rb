@@ -341,3 +341,34 @@ class TestPostFromFeedView < Minitest::Test
     assert_nil post.reply_parent_uri
   end
 end
+
+class TestPostBskyUrl < Minitest::Test
+  def test_uses_handle_when_given
+    url = Tempest::Post.bsky_url(
+      at_uri: "at://did:plc:abc/app.bsky.feed.post/k1",
+      handle: "asonas.bsky.social",
+    )
+    assert_equal "https://bsky.app/profile/asonas.bsky.social/post/k1", url
+  end
+
+  def test_falls_back_to_did_when_handle_missing
+    url = Tempest::Post.bsky_url(
+      at_uri: "at://did:plc:abc/app.bsky.feed.post/k1",
+    )
+    assert_equal "https://bsky.app/profile/did:plc:abc/post/k1", url
+  end
+
+  def test_falls_back_to_did_when_handle_is_empty_string
+    url = Tempest::Post.bsky_url(
+      at_uri: "at://did:plc:abc/app.bsky.feed.post/k1",
+      handle: "",
+    )
+    assert_equal "https://bsky.app/profile/did:plc:abc/post/k1", url
+  end
+
+  def test_returns_nil_for_non_post_at_uri
+    assert_nil Tempest::Post.bsky_url(at_uri: "at://did:plc:abc/app.bsky.feed.like/k1")
+    assert_nil Tempest::Post.bsky_url(at_uri: "not-an-at-uri")
+    assert_nil Tempest::Post.bsky_url(at_uri: nil)
+  end
+end

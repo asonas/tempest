@@ -41,18 +41,40 @@ class TestCommandsPost < Minitest::Test
     assert_equal "hello world", body[:record]["text"]
     assert_equal ["ja"], body[:record]["langs"]
     assert_match(%r{posted: at://}, out.string)
+    assert_match(
+      %r{url: https://bsky\.app/profile/asonas\.bsky\.social/post/k},
+      out.string,
+    )
   end
 
-  def test_json_flag_outputs_uri_and_cid_object
-    client = FakeXRPCClient.new(post_response: { "uri" => "at://x", "cid" => "bafy" })
+  def test_human_output_uses_did_when_at_uri_does_not_match_session
+    # A response whose URI belongs to a different DID (unusual, but defensive)
+    # still gets a usable bsky.app URL by falling back to the session handle,
+    # which is what humans actually want to open.
+    client = FakeXRPCClient.new(
+      post_response: { "uri" => "at://did:plc:abc/app.bsky.feed.post/abcd", "cid" => "bafy" },
+    )
+    out = StringIO.new
+    Tempest::Commands::Post.call(
+      argv: ["hi"], session: fake_session, client: client,
+      stdout: out, stderr: StringIO.new, stdin: StringIO.new,
+    )
+    assert_match(%r{url: https://bsky\.app/profile/asonas\.bsky\.social/post/abcd}, out.string)
+  end
+
+  def test_json_flag_outputs_uri_and_cid_and_url_object
+    client = FakeXRPCClient.new(
+      post_response: { "uri" => "at://did:plc:abc/app.bsky.feed.post/k1", "cid" => "bafy" },
+    )
     out = StringIO.new
     Tempest::Commands::Post.call(
       argv: ["--json", "hi"], session: fake_session, client: client,
       stdout: out, stderr: StringIO.new, stdin: StringIO.new,
     )
     payload = JSON.parse(out.string)
-    assert_equal "at://x", payload["uri"]
+    assert_equal "at://did:plc:abc/app.bsky.feed.post/k1", payload["uri"]
     assert_equal "bafy",   payload["cid"]
+    assert_equal "https://bsky.app/profile/asonas.bsky.social/post/k1", payload["url"]
   end
 
   def test_dash_reads_text_from_stdin

@@ -262,20 +262,11 @@ module Tempest
         target.respond_to?(:uri) && target.uri ? target.uri : target.at_uri
       end
 
-      # bsky.app accepts both handles and DIDs in the profile path. Prefer the
-      # handle when we have it (human-readable URLs are nicer for sharing or
-      # for the user to glance at), but fall back to the DID for posts that
-      # arrived through Jetstream where only the DID is known.
       def bsky_post_url(target)
-        at_uri = reply_uri_for(target)
-        match = at_uri.match(%r{\Aat://([^/]+)/app\.bsky\.feed\.post/(.+)\z})
-        return nil unless match
-
-        did = match[1]
-        rkey = match[2]
-        handle = target.respond_to?(:handle) ? target.handle : nil
-        profile = handle && !handle.empty? ? handle : did
-        "https://bsky.app/profile/#{profile}/post/#{rkey}"
+        Tempest::Post.bsky_url(
+          at_uri: reply_uri_for(target),
+          handle: target.respond_to?(:handle) ? target.handle : nil,
+        )
       end
 
       def handle_stream(arg)

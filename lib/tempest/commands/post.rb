@@ -29,13 +29,16 @@ module Tempest
           langs: opts[:langs],
         )
 
+        url = Tempest::Post.bsky_url(at_uri: response["uri"], handle: session.handle)
+
         if opts[:json]
           require "json"
-          stdout.puts JSON.generate(
-            "uri" => response["uri"], "cid" => response["cid"],
-          )
+          payload = { "uri" => response["uri"], "cid" => response["cid"] }
+          payload["url"] = url if url
+          stdout.puts JSON.generate(payload)
         else
           stdout.puts "posted: #{response["uri"]}"
+          stdout.puts "url: #{url}" if url
         end
         0
       end
