@@ -17,6 +17,7 @@ This is an unofficial, third-party client. It is not affiliated with or endorsed
 
 - Ruby 4.0 or later
 - A Bluesky account and an [app password](https://bsky.app/settings/app-passwords)
+- [libvips](https://www.libvips.org/) for avatar thumbnail rendering (`brew install vips` on macOS, `apt install libvips42` on Debian/Ubuntu)
 
 ## Installation
 

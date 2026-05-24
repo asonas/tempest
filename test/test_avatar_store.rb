@@ -256,3 +256,62 @@ class TestAvatarStore < Minitest::Test
     end
   end
 end
+
+# Exercises Tempest::AvatarStore.default_converter against the real libvips
+# backend (no fake injected). Asserts the wire-level PNG header so we are not
+# depending on vips to validate vips: anyone with a hex editor can read this.
+class TestAvatarStoreDefaultConverter < Minitest::Test
+  PNG_SIGNATURE = "\x89PNG\r\n\x1A\n".b.freeze
+
+  def setup
+    require "vips"
+  end
+
+  def test_converts_jpeg_input_into_128x128_8bit_png
+    source = Vips::Image.black(200, 200).bandjoin([10, 220, 30]).cast(:uchar)
+    bytes = source.jpegsave_buffer
+
+    png = Tempest::AvatarStore.default_converter.call(bytes, content_type: "image/jpeg")
+
+    width, height, bit_depth, color_type = parse_ihdr(png)
+    assert_equal 128, width
+    assert_equal 128, height
+    assert_equal 8, bit_depth
+    assert_includes [2, 6], color_type, "expected RGB(2) or RGBA(6), got #{color_type}"
+  end
+
+  def test_center_crops_non_square_input_to_square
+    source = Vips::Image.black(400, 100).bandjoin([200, 80, 10]).cast(:uchar)
+    bytes = source.pngsave_buffer
+
+    png = Tempest::AvatarStore.default_converter.call(bytes, content_type: "image/png")
+
+    width, height, _bit_depth, _color_type = parse_ihdr(png)
+    assert_equal 128, width, "non-square input should still produce square output"
+    assert_equal 128, height
+  end
+
+  def test_output_starts_with_png_signature
+    source = Vips::Image.black(50, 50).bandjoin([0, 0, 255]).cast(:uchar)
+    bytes = source.pngsave_buffer
+
+    png = Tempest::AvatarStore.default_converter.call(bytes, content_type: "image/png")
+
+    assert_equal PNG_SIGNATURE, png.byteslice(0, 8)
+  end
+
+  private
+
+  # The PNG IHDR chunk lives immediately after the 8-byte signature. Its layout
+  # is fixed: 4 bytes length, 4 bytes "IHDR", 4 bytes width (BE), 4 bytes height
+  # (BE), 1 byte bit depth, 1 byte color type.
+  def parse_ihdr(png)
+    raise "missing PNG signature" unless png.start_with?(PNG_SIGNATURE)
+    raise "missing IHDR chunk type" unless png.byteslice(12, 4) == "IHDR"
+    width = png.byteslice(16, 4).unpack1("N")
+    height = png.byteslice(20, 4).unpack1("N")
+    bit_depth = png.getbyte(24)
+    color_type = png.getbyte(25)
+    [width, height, bit_depth, color_type]
+  end
+end

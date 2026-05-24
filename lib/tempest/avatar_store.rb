@@ -1,8 +1,6 @@
 require "fileutils"
 require "json"
 require "net/http"
-require "open3"
-require "tmpdir"
 require "uri"
 
 require_relative "../tempest"
@@ -76,47 +74,19 @@ module Tempest
       end
     end
 
-    # Production format normalizer: shells out to ImageMagick to crop-fit the
-    # avatar into a 128x128 PNG. The crop pads non-square inputs so the Kitty
-    # graphics protocol can render at a consistent 1-row, 2-col aspect.
+    # Production format normalizer: uses libvips (via ruby-vips) to crop-fit
+    # the avatar into a 128x128, 8-bit sRGB PNG in-process. The center crop
+    # pads non-square inputs so the Kitty graphics protocol can render at a
+    # consistent 1-row, 2-col aspect, and the explicit 8-bit pngsave avoids
+    # the 16-bit output that some ImageMagick builds emit, which kitty refuses
+    # to draw.
     def self.default_converter
       @default_converter ||= lambda do |bytes, content_type:|
-        ext = ext_for(content_type, bytes)
-        Dir.mktmpdir do |dir|
-          src = File.join(dir, "src.#{ext}")
-          dst = File.join(dir, "out.png")
-          File.binwrite(src, bytes)
-          _out, status = Open3.capture2e(
-            "magick", src,
-            "-resize", "128x128^",
-            "-gravity", "center",
-            "-extent", "128x128",
-            dst,
-          )
-          raise "magick convert failed" unless status.success?
-          File.binread(dst)
-        end
+        require "vips"
+        image = Vips::Image.thumbnail_buffer(bytes, 128, height: 128, crop: :centre)
+        image = image.colourspace("srgb") unless image.interpretation == :srgb
+        image.pngsave_buffer(bitdepth: 8)
       end
-    end
-
-    EXT_BY_MIME = {
-      "image/jpeg" => "jpg",
-      "image/jpg" => "jpg",
-      "image/png" => "png",
-      "image/webp" => "webp",
-      "image/gif" => "gif",
-      "image/avif" => "avif",
-    }.freeze
-
-    def self.ext_for(content_type, bytes)
-      mime = content_type.to_s.split(";").first.to_s.strip.downcase
-      return EXT_BY_MIME[mime] if EXT_BY_MIME.key?(mime)
-      head = bytes.byteslice(0, 16).to_s
-      return "jpg"  if head.start_with?("\xFF\xD8\xFF".b)
-      return "png"  if head.start_with?("\x89PNG\r\n\x1A\n".b)
-      return "gif"  if head.start_with?("GIF87a", "GIF89a")
-      return "webp" if head[0, 4] == "RIFF" && head[8, 4] == "WEBP"
-      "bin"
     end
 
     def path_for(did)

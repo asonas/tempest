@@ -21,4 +21,5 @@ Gem::Specification.new do |spec|
   spec.add_dependency "reline", "~> 0.6"
   spec.add_dependency "async", "~> 2.21"
   spec.add_dependency "async-websocket", "~> 0.28"
+  spec.add_dependency "ruby-vips", "~> 2.2"
 end
