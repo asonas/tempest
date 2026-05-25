@@ -281,6 +281,12 @@ module Tempest
           if @stream_manager.running?
             @output.puts "stream is already on"
           else
+            # Catch the user up to the present before the live worker resumes.
+            # Without this, the only path back to a fresh timeline after
+            # `:stream off` (or a long offline window before reconnect) is
+            # Jetstream's cursor replay — which can be empty if events were
+            # trimmed or filtered out client-side.
+            backfill_timeline
             @stream_manager.start { |event| handle_stream_event(event) }
             @output.puts "stream on"
           end

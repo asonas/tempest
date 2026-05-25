@@ -198,6 +198,29 @@ class TestREPLRunner < Minitest::Test
     assert_match(/already on/, out)
   end
 
+  # `:stream on` after `:stream off` (or `--no-stream` startup) should refresh
+  # the timeline once before the live worker resumes. Otherwise the only catch-
+  # up path is Jetstream cursor-replay, which can return nothing if events
+  # were trimmed or filtered out client-side.
+  def test_stream_on_runs_timeline_backfill_before_starting_manager
+    stream = FakeStreamManager.new
+    out = run_with_stream([":stream on", ":quit"], stream_manager: stream)
+
+    assert_equal 1, stream.start_calls
+    assert_equal 1, @client.timeline_calls, "expected getTimeline to fire on :stream on"
+    assert_match(/@alice\.bsky\.social: hi/, out, "expected backfilled post to appear")
+  end
+
+  # When the stream is already running, `:stream on` is a no-op and must not
+  # double-fetch the timeline.
+  def test_stream_on_when_already_running_does_not_backfill
+    stream = FakeStreamManager.new
+    stream.running = true
+    run_with_stream([":stream on", ":quit"], stream_manager: stream)
+
+    assert_equal 0, @client.timeline_calls
+  end
+
   def test_stream_event_printed_via_formatter
     require "tempest/jetstream/decoder"
     event = Tempest::Jetstream::Event.new(
@@ -319,7 +342,10 @@ class TestREPLRunner < Minitest::Test
     runner.run
 
     out = @output.string
-    assert_equal 1, client.timeline_calls
+    # `:stream on` itself triggers one backfill, then `:gapped` triggers a
+    # second. The second is effectively a no-op print-wise (posts are deduped
+    # via @displayed_post_uris), but the getTimeline call still fires.
+    assert_equal 2, client.timeline_calls
     assert_match(/^-- fetching timeline/, out)
 
     # Posts must appear oldest-first below the status line.
