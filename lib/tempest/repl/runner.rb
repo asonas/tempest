@@ -37,7 +37,8 @@ module Tempest
       def initialize(session:, client:, input:, output:, dispatcher: Dispatcher.new,
                      stream_manager: nil, handle_resolver: nil, stream_output: nil,
                      timeline_store: nil, registry: Registry.new, opener: DEFAULT_OPENER,
-                     avatar_store: nil, reauth: nil, compose: Compose.method(:run))
+                     avatar_store: nil, reauth: nil, compose: Compose.method(:run),
+                     clock: -> { Time.now })
         @session = session
         @client = client
         @input = input
@@ -52,11 +53,16 @@ module Tempest
         @avatar_store = avatar_store
         @reauth = reauth
         @compose = compose
+        @clock = clock
         # URIs already printed via bootstrap_timeline or backfill_timeline.
         # Jetstream's cursor-replay can re-emit those same posts on startup
         # (the persisted cursor is older than the getTimeline window), so the
         # stream handler skips post events whose URI is in this set.
         @displayed_post_uris = Set.new
+        # Unix-microseconds captured at stream start. Likes/reposts whose
+        # time_us is older are treated as cursor-replay catchup noise and
+        # suppressed; posts still come through so the timeline catches up.
+        @catchup_boundary_us = nil
       end
 
       def bootstrap_timeline
@@ -85,6 +91,7 @@ module Tempest
         return unless @stream_manager
         return if @stream_manager.running?
 
+        mark_catchup_boundary
         @stream_manager.start { |event| handle_stream_event(event) }
       end
 
@@ -287,6 +294,7 @@ module Tempest
             # Jetstream's cursor replay — which can be empty if events were
             # trimmed or filtered out client-side.
             backfill_timeline
+            mark_catchup_boundary
             @stream_manager.start { |event| handle_stream_event(event) }
             @output.puts "stream on"
           end
@@ -309,10 +317,21 @@ module Tempest
           return unless event.respond_to?(:create?) && event.create?
           return unless event.post? || event.like? || event.repost?
           return if event.post? && @displayed_post_uris.include?(event.at_uri)
+          return if (event.like? || event.repost?) && catchup_replay?(event)
 
           @stream_output.puts Formatter.event_line(event, registry: @registry, resolver: @handle_resolver, avatar_store: @avatar_store)
           @displayed_post_uris << event.at_uri if event.post?
         end
+      end
+
+      def mark_catchup_boundary
+        @catchup_boundary_us = (@clock.call.to_f * 1_000_000).to_i
+      end
+
+      def catchup_replay?(event)
+        return false unless @catchup_boundary_us
+        return false unless event.respond_to?(:time_us) && event.time_us
+        event.time_us < @catchup_boundary_us
       end
 
       def backfill_timeline

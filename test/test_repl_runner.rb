@@ -523,8 +523,9 @@ class TestREPLRunner < Minitest::Test
 
   def test_stream_like_event_rendered_with_target
     require "tempest/jetstream/decoder"
+    # time_us=2 > clock boundary (Time.at(0) => 0us), so this is "live" and renders.
     event = Tempest::Jetstream::Event.new(
-      kind: :commit, did: "did:plc:actor", time_us: 1,
+      kind: :commit, did: "did:plc:actor", time_us: 2,
       collection: "app.bsky.feed.like", operation: :create,
       rkey: "lk", cid: nil, text: nil, created_at: nil,
       subject_uri: "at://did:plc:target/app.bsky.feed.post/abc",
@@ -551,6 +552,7 @@ class TestREPLRunner < Minitest::Test
       input: reader_class.new([":stream on", ":quit"], stream, event),
       output: @output,
       stream_manager: stream,
+      clock: -> { Time.at(0) },
     ).run
 
     assert_match(/<did:plc:actor>: liked <did:plc:target>'s post/, @output.string)
@@ -558,8 +560,9 @@ class TestREPLRunner < Minitest::Test
 
   def test_stream_repost_event_rendered_with_target
     require "tempest/jetstream/decoder"
+    # time_us=2 > clock boundary (Time.at(0) => 0us), so this is "live" and renders.
     event = Tempest::Jetstream::Event.new(
-      kind: :commit, did: "did:plc:actor", time_us: 1,
+      kind: :commit, did: "did:plc:actor", time_us: 2,
       collection: "app.bsky.feed.repost", operation: :create,
       rkey: "rp", cid: nil, text: nil, created_at: nil,
       subject_uri: "at://did:plc:target/app.bsky.feed.post/xyz",
@@ -586,9 +589,124 @@ class TestREPLRunner < Minitest::Test
       input: reader_class.new([":stream on", ":quit"], stream, event),
       output: @output,
       stream_manager: stream,
+      clock: -> { Time.at(0) },
     ).run
 
     assert_match(/<did:plc:actor>: reposted <did:plc:target>'s post/, @output.string)
+  end
+
+  # Cursor catchup replays old events when reconnecting with a saved cursor.
+  # We want the timeline diff (posts) to come through so the user catches up,
+  # but bulk like/repost activity from hours ago is just noise — suppress it.
+  def test_stream_like_event_with_time_us_before_catchup_boundary_is_suppressed
+    require "tempest/jetstream/decoder"
+    # Boundary set at :stream on time = Time.at(100) => 100_000_000us.
+    # Event time_us=50_000_000us is 50s before that → catchup replay.
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:actor", time_us: 50_000_000,
+      collection: "app.bsky.feed.like", operation: :create,
+      rkey: "lk", cid: nil, text: nil, created_at: nil,
+      subject_uri: "at://did:plc:target/app.bsky.feed.post/abc",
+    )
+
+    stream = FakeStreamManager.new
+    reader_class = Class.new do
+      def initialize(inputs, stream, event)
+        @inputs = inputs.dup
+        @stream = stream
+        @event = event
+      end
+
+      def readline(_prompt)
+        line = @inputs.shift
+        @stream.emit(@event) if line == ":quit"
+        line
+      end
+    end
+
+    Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: reader_class.new([":stream on", ":quit"], stream, event),
+      output: @output,
+      stream_manager: stream,
+      clock: -> { Time.at(100) },
+    ).run
+
+    refute_match(/liked/, @output.string)
+  end
+
+  def test_stream_repost_event_with_time_us_before_catchup_boundary_is_suppressed
+    require "tempest/jetstream/decoder"
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:actor", time_us: 50_000_000,
+      collection: "app.bsky.feed.repost", operation: :create,
+      rkey: "rp", cid: nil, text: nil, created_at: nil,
+      subject_uri: "at://did:plc:target/app.bsky.feed.post/xyz",
+    )
+
+    stream = FakeStreamManager.new
+    reader_class = Class.new do
+      def initialize(inputs, stream, event)
+        @inputs = inputs.dup
+        @stream = stream
+        @event = event
+      end
+
+      def readline(_prompt)
+        line = @inputs.shift
+        @stream.emit(@event) if line == ":quit"
+        line
+      end
+    end
+
+    Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: reader_class.new([":stream on", ":quit"], stream, event),
+      output: @output,
+      stream_manager: stream,
+      clock: -> { Time.at(100) },
+    ).run
+
+    refute_match(/reposted/, @output.string)
+  end
+
+  # Posts must still come through during catchup so the user sees what they
+  # missed — only likes/reposts are suppressed.
+  def test_stream_post_event_with_time_us_before_catchup_boundary_is_still_rendered
+    require "tempest/jetstream/decoder"
+    event = Tempest::Jetstream::Event.new(
+      kind: :commit, did: "did:plc:author", time_us: 50_000_000,
+      collection: "app.bsky.feed.post", operation: :create,
+      rkey: "r", cid: nil, text: "caught up post", created_at: "2026-01-01T00:00:00Z",
+    )
+
+    stream = FakeStreamManager.new
+    reader_class = Class.new do
+      def initialize(inputs, stream, event)
+        @inputs = inputs.dup
+        @stream = stream
+        @event = event
+      end
+
+      def readline(_prompt)
+        line = @inputs.shift
+        @stream.emit(@event) if line == ":quit"
+        line
+      end
+    end
+
+    Tempest::REPL::Runner.new(
+      session: @session,
+      client: @client,
+      input: reader_class.new([":stream on", ":quit"], stream, event),
+      output: @output,
+      stream_manager: stream,
+      clock: -> { Time.at(100) },
+    ).run
+
+    assert_match(/caught up post/, @output.string)
   end
 
   def test_stream_status_rendered_with_double_dash_prefix
