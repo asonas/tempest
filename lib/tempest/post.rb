@@ -66,7 +66,9 @@ module Tempest
 
       record["langs"] = langs if langs && !langs.empty?
 
-      facets = detect_mention_facets(text, client: client) + detect_link_facets(text)
+      facets = detect_mention_facets(text, client: client) +
+               detect_link_facets(text) +
+               detect_tag_facets(text)
       facets.sort_by! { |f| f["index"]["byteStart"] }
       record["facets"] = facets unless facets.empty?
 
@@ -175,6 +177,52 @@ module Tempest
       response.is_a?(Hash) ? response["did"] : nil
     rescue Tempest::APIError
       nil
+    end
+
+    # Scans `text` for `#hashtag` runs and builds AT Protocol tag facets.
+    # Without this the AppView shows the hashtag as plain text instead of
+    # linking it to the tag feed. The facet's `tag` value excludes the leading
+    # `#` (per app.bsky.richtext.facet#tag), while the byte index spans the
+    # `#` and the tag together. Mirrors the official @atproto/api detection:
+    # a hashtag must start the text or follow whitespace, contain at least one
+    # non-digit / non-punctuation character (so bare `#123` is ignored), and is
+    # capped at 64 graphemes after trailing punctuation is stripped.
+    # Zero-width / formatting code points the official regex excludes from a tag.
+    TAG_ZERO_WIDTH = "­⁠ ​‌‍⃢".freeze
+    TAG_PATTERN = /
+      (?:\A|\s)                                # start of text or whitespace
+      [\#＃]                               # '#' or fullwidth
+      (                                        # capture the tag body
+        (?!️)                             # not an emoji variation selector
+        [^\s#{TAG_ZERO_WIDTH}]*
+        [^\d\s\p{P}#{TAG_ZERO_WIDTH}]+          # >=1 non-digit, non-punct char
+        [^\s#{TAG_ZERO_WIDTH}]*
+      )
+    /x
+    TAG_TRAILING_PUNCTUATION = /\p{P}+\z/
+
+    def self.detect_tag_facets(text)
+      return [] if text.nil? || text.empty?
+      return [] unless text.include?("#") || text.include?("＃")
+
+      facets = []
+      pos = 0
+      while (match = TAG_PATTERN.match(text, pos))
+        pos = match.end(1)
+        tag = match[1].strip.sub(TAG_TRAILING_PUNCTUATION, "")
+        next if tag.empty? || tag.length > 64
+
+        hash_index = match.begin(1) - 1
+        byte_start = text[0...hash_index].bytesize
+        byte_end = byte_start + "##{tag}".bytesize
+        facets << {
+          "index" => { "byteStart" => byte_start, "byteEnd" => byte_end },
+          "features" => [
+            { "$type" => "app.bsky.richtext.facet#tag", "tag" => tag },
+          ],
+        }
+      end
+      facets
     end
 
     # Scans `text` for bare URLs and builds AT Protocol link facets pointing

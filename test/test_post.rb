@@ -230,6 +230,35 @@ class TestPostCreate < Minitest::Test
     assert_includes types, "app.bsky.richtext.facet#link"
   end
 
+  def test_create_attaches_tag_facet_for_hashtag_in_text
+    client = FakeClient.new("uri" => "at://x")
+    text = "handy timeline #sekigahara01"
+    Tempest::Post.create(client, did: "did:plc:abc", text: text)
+
+    _, body = client.calls.first
+    facets = body[:record]["facets"]
+    assert_equal 1, facets.length
+    facet = facets.first
+    expected_start = "handy timeline ".bytesize
+    assert_equal expected_start, facet["index"]["byteStart"]
+    assert_equal expected_start + "#sekigahara01".bytesize, facet["index"]["byteEnd"]
+    assert_equal "app.bsky.richtext.facet#tag", facet["features"].first["$type"]
+    assert_equal "sekigahara01", facet["features"].first["tag"]
+  end
+
+  def test_create_merges_tag_with_link_facets_in_byte_order
+    client = FakeClient.new("uri" => "at://x")
+    text = "#ruby see https://example.com"
+    Tempest::Post.create(client, did: "did:plc:abc", text: text)
+
+    _, body = client.calls.first
+    facets = body[:record]["facets"]
+    assert_equal 2, facets.length
+    assert facets[0]["index"]["byteStart"] < facets[1]["index"]["byteStart"]
+    types = facets.map { |f| f["features"].first["$type"] }
+    assert_equal ["app.bsky.richtext.facet#tag", "app.bsky.richtext.facet#link"], types
+  end
+
   def test_create_attaches_link_facet_for_url_in_text
     client = FakeClient.new("uri" => "at://x")
     Tempest::Post.create(client, did: "did:plc:abc", text: "see https://example.com")
@@ -451,6 +480,90 @@ class TestPostDetectMentionFacets < Minitest::Test
     facets = Tempest::Post.detect_mention_facets("email me at @work tomorrow", client: client)
     assert_empty facets
     assert_empty client.get_calls
+  end
+end
+
+class TestPostDetectTagFacets < Minitest::Test
+  def test_detects_single_hashtag
+    text = "tempest is handy #sekigahara01"
+    facets = Tempest::Post.detect_tag_facets(text)
+
+    assert_equal 1, facets.length
+    facet = facets.first
+    expected_start = "tempest is handy ".bytesize
+    expected_end = expected_start + "#sekigahara01".bytesize
+    assert_equal expected_start, facet["index"]["byteStart"]
+    assert_equal expected_end,   facet["index"]["byteEnd"]
+    feature = facet["features"].first
+    assert_equal "app.bsky.richtext.facet#tag", feature["$type"]
+    assert_equal "sekigahara01", feature["tag"]
+  end
+
+  def test_uses_byte_offsets_after_multibyte_text
+    text = "会場のインターネットが細くても快適 #sekigahara01"
+    facets = Tempest::Post.detect_tag_facets(text)
+
+    assert_equal 1, facets.length
+    expected_start = "会場のインターネットが細くても快適 ".bytesize
+    expected_end = expected_start + "#sekigahara01".bytesize
+    assert_equal expected_start, facets.first["index"]["byteStart"]
+    assert_equal expected_end,   facets.first["index"]["byteEnd"]
+    assert_equal "sekigahara01", facets.first["features"].first["tag"]
+  end
+
+  def test_detects_multibyte_tag
+    text = "今年も #関ヶ原 に行く"
+    facets = Tempest::Post.detect_tag_facets(text)
+
+    assert_equal 1, facets.length
+    expected_start = "今年も ".bytesize
+    expected_end = expected_start + "#関ヶ原".bytesize
+    assert_equal expected_start, facets.first["index"]["byteStart"]
+    assert_equal expected_end,   facets.first["index"]["byteEnd"]
+    assert_equal "関ヶ原", facets.first["features"].first["tag"]
+  end
+
+  def test_detects_multiple_hashtags
+    facets = Tempest::Post.detect_tag_facets("#ruby and #bluesky")
+    assert_equal %w[ruby bluesky], facets.map { |f| f["features"].first["tag"] }
+  end
+
+  def test_detects_hashtag_at_start_of_text
+    facets = Tempest::Post.detect_tag_facets("#hello world")
+    assert_equal 1, facets.length
+    assert_equal 0, facets.first["index"]["byteStart"]
+    assert_equal "#hello".bytesize, facets.first["index"]["byteEnd"]
+  end
+
+  def test_strips_trailing_punctuation_from_tag
+    facets = Tempest::Post.detect_tag_facets("nice #bluesky!")
+    assert_equal 1, facets.length
+    assert_equal "bluesky", facets.first["features"].first["tag"]
+    expected_start = "nice ".bytesize
+    assert_equal expected_start + "#bluesky".bytesize, facets.first["index"]["byteEnd"]
+  end
+
+  def test_ignores_numeric_only_tag
+    assert_empty Tempest::Post.detect_tag_facets("count #123 things")
+  end
+
+  def test_ignores_hash_not_preceded_by_whitespace
+    assert_empty Tempest::Post.detect_tag_facets("the language C# is old")
+  end
+
+  def test_supports_fullwidth_hash
+    facets = Tempest::Post.detect_tag_facets("和風 ＃関ヶ原")
+    assert_equal 1, facets.length
+    assert_equal "関ヶ原", facets.first["features"].first["tag"]
+  end
+
+  def test_skips_tag_longer_than_64_graphemes
+    long = "a" * 65
+    assert_empty Tempest::Post.detect_tag_facets("x ##{long}")
+  end
+
+  def test_returns_empty_when_text_has_no_hash
+    assert_empty Tempest::Post.detect_tag_facets("plain text only")
   end
 end
 
