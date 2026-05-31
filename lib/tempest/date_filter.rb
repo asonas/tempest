@@ -9,7 +9,8 @@ module Tempest
       when "today"     then local_midnight(now)
       when "yesterday" then local_midnight(now) - 86_400
       when /\A(\d+)d\z/ then local_midnight(now) - (Regexp.last_match(1).to_i * 86_400)
-      when /\A\d{4}-\d{2}-\d{2}\z/ then Time.local(*raw.split("-").map(&:to_i))
+      when /\A(\d{4})-(\d{2})-(\d{2})\z/
+        Time.local(Regexp.last_match(1).to_i, Regexp.last_match(2).to_i, Regexp.last_match(3).to_i)
       else
         Time.iso8601(raw)
       end
