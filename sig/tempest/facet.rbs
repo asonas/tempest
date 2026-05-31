@@ -1,0 +1,18 @@
+module Tempest
+  # Typed representations of app.bsky.richtext.facet entries attached to a
+  # post record. Only the `#link` feature is modeled.
+  module Facet
+    class Link < Data
+      attr_reader byte_start: Integer
+      attr_reader byte_end: Integer
+      attr_reader uri: String
+
+      def self.new: (byte_start: Integer, byte_end: Integer, uri: String) -> instance
+                  | (Integer byte_start, Integer byte_end, String uri) -> instance
+    end
+
+    # Parse a raw facets array from a Bluesky record into typed entries.
+    # Unknown / unsupported feature types are silently dropped.
+    def self?.parse: (untyped raw) -> Array[Link]
+  end
+end

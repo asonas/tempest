@@ -89,6 +89,36 @@ bundle exec ruby -Ilib -Itest test/test_<name>.rb -n test_<method>
 
 All tests must pass before committing.
 
+## Type checking (RBS + Steep)
+
+Type checking is being introduced incrementally. Signatures live under `sig/`, and
+`Steepfile` lists only the `lib/` files that already have a matching `.rbs`, so
+`steep check` stays green while coverage grows file by file.
+
+Run the type check:
+
+```sh
+bundle exec steep check
+```
+
+`bundle exec rake` runs the test suite and the type check together (`default: [test, steep]`).
+
+Dependency-gem signatures come from `ruby/gem_rbs_collection` via `rbs collection`.
+The downloaded types live in `.gem_rbs_collection/` (gitignored); only
+`rbs_collection.yaml` is committed. After cloning, install them once:
+
+```sh
+bundle exec rbs collection install
+```
+
+To add type coverage for another file:
+
+1. Write its signature under `sig/<path>.rbs` (mirror the `lib/` path).
+2. Add the file to the `check` list in `Steepfile`.
+3. Run `bundle exec steep check` and resolve any errors before committing.
+
+Keep `steep check` green — never add a file to `Steepfile` without its signature.
+
 ## Architecture
 
 `tempest` is a terminal Bluesky client that speaks the AT Protocol directly. It does not use any third-party Bluesky SDK; HTTP and WebSocket are wired by hand.

@@ -5,6 +5,8 @@
 /tmp/
 /log/
 *.gem
+/.gem_rbs_collection/
+/rbs_collection.lock.yaml
 .DS_Store
 .env
 .env.local
