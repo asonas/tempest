@@ -1,0 +1,23 @@
+module Tempest
+  # Earthquake-style identifier ring mapping arbitrary string ids to short
+  # display vars (e.g. "$AA"), recycling slots when the ring wraps.
+  class IdVar
+    @slots: Array[String]
+    @prefix: String
+    @cursor: Integer
+    @forward: Hash[String, String]
+    @reverse: Hash[String, String]
+
+    def initialize: (range: Range[String], ?prefix: String) -> void
+
+    # Return the var for `id`, assigning (and possibly recycling) a slot.
+    def generate: (String id) -> String
+
+    # Reverse lookup: var -> id, or nil when the var is unknown.
+    def lookup: (String var) -> String?
+
+    private
+
+    def evict: (String var) -> void
+  end
+end

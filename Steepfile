@@ -7,4 +7,8 @@ target :lib do
   signature "sig"
 
   check "lib/tempest/facet.rb"
+  check "lib/tempest/date_filter.rb"
+  check "lib/tempest/id_var.rb"
+  check "lib/tempest/deprecated_envs.rb"
+  check "lib/tempest/account_paths.rb"
 end

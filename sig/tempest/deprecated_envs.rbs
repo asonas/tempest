@@ -1,0 +1,9 @@
+module Tempest
+  # Warns once per still-set deprecated environment variable.
+  module DeprecatedEnvs
+    NAMES: Array[String]
+
+    # Emit a stderr warning for every deprecated env var present in `env`.
+    def self?.warn_if_set: (env: Hash[String, String?], stderr: IO) -> void
+  end
+end

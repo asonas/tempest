@@ -1,0 +1,16 @@
+module Tempest
+  # Filesystem layout for per-account storage. Legacy paths honor the
+  # deprecated TEMPEST_*_PATH env vars; per-DID paths cannot be overridden.
+  module AccountPaths
+    def self?.config_base: (?Hash[String, String?] env) -> String
+    def self?.legacy_session_path: (?Hash[String, String?] env) -> String
+    def self?.legacy_cursor_path: (?Hash[String, String?] env) -> String
+    def self?.legacy_timeline_path: (?Hash[String, String?] env) -> String
+    def self?.accounts_dir: (?Hash[String, String?] env) -> String
+    def self?.account_dir: (?Hash[String, String?] env, did: String) -> String
+    def self?.session_path: (?Hash[String, String?] env, did: String) -> String
+    def self?.cursor_path: (?Hash[String, String?] env, did: String) -> String
+    def self?.timeline_path: (?Hash[String, String?] env, did: String) -> String
+    def self?.accounts_json_path: (?Hash[String, String?] env) -> String
+  end
+end

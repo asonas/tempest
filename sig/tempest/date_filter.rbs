@@ -1,0 +1,16 @@
+module Tempest
+  # Parses human date expressions ("today", "yesterday", "3d", "2026-05-31",
+  # ISO8601) and filters post hashes by their `created_at` timestamp.
+  module DateFilter
+    # Convert a raw date expression into a concrete Time. Raises ArgumentError
+    # for unrecognized input.
+    def self?.parse: (String raw, ?now: Time) -> Time
+
+    # Keep only posts whose `created_at` falls within the optional bounds.
+    # Each post is a hash keyed by either a Symbol or a String.
+    def self?.filter: (Array[Hash[Symbol | String, untyped]] posts, ?since: Time?, ?until_at: Time?) -> Array[Hash[Symbol | String, untyped]]
+
+    # Midnight of `now` in local time.
+    def self?.local_midnight: (Time now) -> Time
+  end
+end
