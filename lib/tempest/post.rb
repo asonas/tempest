@@ -2,7 +2,12 @@ require_relative "../tempest"
 require_relative "facet"
 
 module Tempest
-  Post = Data.define(:uri, :cid, :handle, :display_name, :text, :created_at, :facets, :reply_parent_uri, :embed_kind) do
+  Post = Data.define(:uri, :cid, :handle, :display_name, :text, :created_at, :facets, :reply_parent_uri, :embed_kind)
+
+  # Methods and constants are defined in a reopened `class Post` (rather than a
+  # `Data.define(...) do ... end` block) so that Steep recognizes them as the
+  # class body and can type-check this file.
+  class Post
     # AT Protocol embed `$type` values mapped to short symbols used by the
     # REPL. `record` (quote) and `external` (link card) are intentionally
     # absent: they're surfaced through other UI (URL annotation), so they
