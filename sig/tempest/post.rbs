@@ -2,7 +2,7 @@ module Tempest
   # Typed wrapper around an app.bsky.feed post view, plus helpers for
   # composing post / like records and detecting richtext facets.
   class Post < Data
-    type ref = { uri: untyped, cid: untyped }
+    type ref = Hash[Symbol, untyped]
     type reply_refs = { root: ref, parent: ref }
     type facet = Hash[String, untyped]
 

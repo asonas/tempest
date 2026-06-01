@@ -12,10 +12,5 @@ target :lib do
   check "lib/tempest/deprecated_envs.rb"
   check "lib/tempest/account_paths.rb"
   check "lib/tempest/timeline.rb"
-  # NOTE: lib/tempest/post.rb is intentionally not checked yet. Its methods and
-  # constants live inside a `Data.define(...) do ... end` block, which Steep does
-  # not recognize as the class body. Checking it first requires refactoring that
-  # block into a reopened `class Post` and hardening String-slice/encoding
-  # nil-safety. The signature in sig/tempest/post.rbs is declared so that
-  # consumers (e.g. timeline.rb) type-check against Post in the meantime.
+  check "lib/tempest/post.rb"
 end

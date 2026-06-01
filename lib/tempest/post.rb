@@ -61,7 +61,7 @@ module Tempest
         "$type" => "app.bsky.feed.post",
         "text" => text,
         "createdAt" => created_at,
-      }
+      } #: Hash[String, untyped]
       if reply
         record["reply"] = {
           "root"   => { "uri" => reply[:root][:uri],   "cid" => reply[:root][:cid] },
@@ -157,12 +157,14 @@ module Tempest
       return [] unless text.include?("@")
 
       bytes = text.b
-      facets = []
+      facets = [] #: Array[Hash[String, untyped]]
       pos = 0
       while (match = MENTION_PATTERN.match(bytes, pos))
-        handle_byte_start = match.begin(1) - 1
-        handle_byte_end = match.end(1)
-        handle = match[1].dup.force_encoding(Encoding::UTF_8)
+        group_start = match.begin(1) #: Integer
+        handle_byte_start = group_start - 1
+        handle_byte_end = match.end(1) #: Integer
+        captured = match[1] #: String
+        handle = captured.dup.force_encoding(Encoding::UTF_8)
         did = resolve_handle_did(handle, client: client)
         if did
           facets << {
@@ -210,15 +212,18 @@ module Tempest
       return [] if text.nil? || text.empty?
       return [] unless text.include?("#") || text.include?("＃")
 
-      facets = []
+      facets = [] #: Array[Hash[String, untyped]]
       pos = 0
       while (match = TAG_PATTERN.match(text, pos))
-        pos = match.end(1)
-        tag = match[1].strip.sub(TAG_TRAILING_PUNCTUATION, "")
+        pos = match.end(1) #: Integer
+        captured = match[1] #: String
+        tag = captured.strip.sub(TAG_TRAILING_PUNCTUATION, "")
         next if tag.empty? || tag.length > 64
 
-        hash_index = match.begin(1) - 1
-        byte_start = text[0...hash_index].bytesize
+        group_start = match.begin(1) #: Integer
+        hash_index = group_start - 1
+        prefix = text[0...hash_index] #: String
+        byte_start = prefix.bytesize
         byte_end = byte_start + "##{tag}".bytesize
         facets << {
           "index" => { "byteStart" => byte_start, "byteEnd" => byte_end },
@@ -237,12 +242,13 @@ module Tempest
       return [] if text.nil? || text.empty?
 
       bytes = text.b
-      facets = []
+      facets = [] #: Array[Hash[String, untyped]]
       pos = 0
       while (match = /https?:\/\/\S+/n.match(bytes, pos))
-        byte_start = match.begin(0)
-        byte_end = match.end(0)
-        uri = match[0].dup.force_encoding(Encoding::UTF_8)
+        byte_start = match.begin(0) #: Integer
+        byte_end = match.end(0) #: Integer
+        captured = match[0] #: String
+        uri = captured.dup.force_encoding(Encoding::UTF_8)
         facets << {
           "index" => { "byteStart" => byte_start, "byteEnd" => byte_end },
           "features" => [
