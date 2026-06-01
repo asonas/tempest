@@ -1,0 +1,8 @@
+module Tempest
+  # Fetches app.bsky.feed.getTimeline and maps each entry to a Post.
+  module Timeline
+    DEFAULT_LIMIT: Integer
+
+    def self?.fetch: (XRPCClient client, ?limit: Integer) -> Array[Post]
+  end
+end

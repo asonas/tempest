@@ -1,0 +1,59 @@
+module Tempest
+  # Typed wrapper around an app.bsky.feed post view, plus helpers for
+  # composing post / like records and detecting richtext facets.
+  class Post < Data
+    type ref = { uri: untyped, cid: untyped }
+    type reply_refs = { root: ref, parent: ref }
+    type facet = Hash[String, untyped]
+
+    EMBED_KINDS: Hash[String, Symbol]
+    MENTION_PATTERN: Regexp
+    TAG_ZERO_WIDTH: String
+    TAG_PATTERN: Regexp
+    TAG_TRAILING_PUNCTUATION: Regexp
+
+    attr_reader uri: String?
+    attr_reader cid: String?
+    attr_reader handle: String?
+    attr_reader display_name: String?
+    attr_reader text: String?
+    attr_reader created_at: String?
+    attr_reader facets: Array[Tempest::Facet::Link]
+    attr_reader reply_parent_uri: String?
+    attr_reader embed_kind: Symbol?
+
+    def self.new: (uri: String?, cid: String?, handle: String?, display_name: String?, text: String?, created_at: String?, ?facets: Array[Tempest::Facet::Link], ?reply_parent_uri: String?, ?embed_kind: Symbol?) -> instance
+
+    def initialize: (uri: String?, cid: String?, handle: String?, display_name: String?, text: String?, created_at: String?, ?facets: Array[Tempest::Facet::Link], ?reply_parent_uri: String?, ?embed_kind: Symbol?) -> void
+
+    # Build a Post from a raw app.bsky.feed.defs#postView hash.
+    def self.from_feed_view: (untyped post) -> Post
+
+    # Map an embed hash to a short media-marker symbol, or nil.
+    def self.embed_kind_from: (untyped embed) -> Symbol?
+
+    # Compose and send an app.bsky.feed.post record. Returns the createRecord response.
+    def self.create: (XRPCClient client, did: String, text: String, ?reply: reply_refs?, ?langs: Array[String]?, ?created_at: String) -> untyped
+
+    # Compose and send an app.bsky.feed.like record. Returns the createRecord response.
+    def self.like: (XRPCClient client, did: String, subject_uri: String, subject_cid: String, ?created_at: String) -> untyped
+
+    # Resolve reply refs (root + parent) for a parent post URI.
+    def self.fetch_reply_refs: (XRPCClient client, String parent_uri) -> reply_refs
+
+    # Build a bsky.app web URL from an at:// post URI, or nil if not a post record.
+    def self.bsky_url: (at_uri: String, ?handle: String?) -> String?
+
+    # Detect @mention facets, resolving handles to DIDs via the client.
+    def self.detect_mention_facets: (String? text, client: XRPCClient) -> Array[facet]
+
+    # Resolve a handle to its DID, or nil on failure.
+    def self.resolve_handle_did: (String handle, client: XRPCClient) -> untyped
+
+    # Detect #hashtag facets.
+    def self.detect_tag_facets: (String? text) -> Array[facet]
+
+    # Detect bare-URL link facets.
+    def self.detect_link_facets: (String? text) -> Array[facet]
+  end
+end

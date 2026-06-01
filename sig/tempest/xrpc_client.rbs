@@ -1,0 +1,12 @@
+module Tempest
+  # Calls XRPC endpoints with automatic 401-refresh-retry. `get` / `post`
+  # return the parsed JSON response body (shape depends on the endpoint, so
+  # it is typed as `untyped`).
+  class XRPCClient
+    def initialize: (untyped session) -> void
+
+    def get: (String nsid, ?query: Hash[String, untyped]?) -> untyped
+
+    def post: (String nsid, body: Hash[untyped, untyped]) -> untyped
+  end
+end
