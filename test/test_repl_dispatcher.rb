@@ -127,4 +127,22 @@ class TestREPLDispatcher < Minitest::Test
     assert_equal :compose, cmd.name
     assert_empty cmd.args
   end
+
+  def test_colon_quote_with_id_and_body_keeps_body_intact
+    cmd = @dispatcher.dispatch(":quote $AA hello there")
+    assert_equal :quote, cmd.name
+    assert_equal ["$AA", "hello there"], cmd.args
+  end
+
+  def test_colon_quote_with_id_only_returns_empty_body
+    cmd = @dispatcher.dispatch(":quote $AA")
+    assert_equal :quote, cmd.name
+    assert_equal ["$AA", ""], cmd.args
+  end
+
+  def test_colon_quote_without_arg_returns_empty_id_and_body
+    cmd = @dispatcher.dispatch(":quote")
+    assert_equal :quote, cmd.name
+    assert_equal ["", ""], cmd.args
+  end
 end

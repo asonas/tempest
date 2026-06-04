@@ -16,16 +16,17 @@ module Tempest
 
       HELP_TEXT = <<~HELP
         Available commands:
-          :timeline       Fetch and print the home timeline
-          :stream on|off  Toggle the Jetstream live feed
-          :compose        Open $EDITOR to write a multi-line post
-          :open $XX|$LX   Open the post or URL with the given id in the browser
-          :fav $XX        Like the post with id $XX
-          :relogin        Re-authenticate when the cached session is dead
-          :help           Show this help
-          :quit           Exit tempest (or Ctrl-D)
+          :timeline          Fetch and print the home timeline
+          :stream on|off     Toggle the Jetstream live feed
+          :compose           Open $EDITOR to write a multi-line post
+          :open $XX|$LX      Open the post or URL with the given id in the browser
+          :fav $XX           Like the post with id $XX
+          :quote $XX <text>  Quote-post the post with id $XX
+          :relogin           Re-authenticate when the cached session is dead
+          :help              Show this help
+          :quit              Exit tempest (or Ctrl-D)
 
-          $XX <text>      Reply to the post with id $XX
+          $XX <text>         Reply to the post with id $XX
 
         Any other input is sent as a new post.
       HELP
@@ -123,6 +124,8 @@ module Tempest
             handle_open(command.args.first)
           when :fav
             handle_fav(command.args.first)
+          when :quote
+            handle_quote(command.args[0], command.args[1])
           when :relogin
             handle_relogin
           when :unknown
@@ -215,6 +218,35 @@ module Tempest
           did: @session.did,
           text: body,
           reply: reply_refs,
+        )
+        @output.puts "posted: #{response["uri"]}"
+      rescue Tempest::AuthenticationError => e
+        @output.puts "error: #{e.message} (#{RELOGIN_HINT})"
+      rescue Tempest::Error => e
+        @output.puts "error: #{e.message}"
+      end
+
+      def handle_quote(var, body)
+        if var.nil? || var.empty?
+          @output.puts "usage: :quote $XX <text>"
+          return
+        end
+        target = @registry.find_post(var)
+        if target.nil?
+          @output.puts "unknown id: #{var}"
+          return
+        end
+        body = body.to_s.strip
+        if body.empty?
+          @output.puts "usage: :quote $XX <text>"
+          return
+        end
+        subject = Post.fetch_subject_ref(@client, reply_uri_for(target))
+        response = Post.create(
+          @client,
+          did: @session.did,
+          text: body,
+          quote: subject,
         )
         @output.puts "posted: #{response["uri"]}"
       rescue Tempest::AuthenticationError => e

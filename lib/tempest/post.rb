@@ -55,7 +55,10 @@ module Tempest
     # `reply` is `{ root: {uri:, cid:}, parent: {uri:, cid:} }` so callers can
     # preserve the original conversation root when replying deep in a thread.
     # Use `fetch_reply_refs` to build this from a parent URI.
-    def self.create(client, did:, text:, reply: nil, langs: nil,
+    # `quote` is `{ uri:, cid: }` for the post being quoted; it is attached as
+    # an `app.bsky.embed.record` embed so the AppView renders the quoted post
+    # inline. Use `fetch_subject_ref` to build this from a post URI.
+    def self.create(client, did:, text:, reply: nil, quote: nil, langs: nil,
                     created_at: Time.now.utc.strftime("%Y-%m-%dT%H:%M:%S.%LZ"))
       record = {
         "$type" => "app.bsky.feed.post",
@@ -66,6 +69,12 @@ module Tempest
         record["reply"] = {
           "root"   => { "uri" => reply[:root][:uri],   "cid" => reply[:root][:cid] },
           "parent" => { "uri" => reply[:parent][:uri], "cid" => reply[:parent][:cid] },
+        }
+      end
+      if quote
+        record["embed"] = {
+          "$type" => "app.bsky.embed.record",
+          "record" => { "uri" => quote[:uri], "cid" => quote[:cid] },
         }
       end
 
@@ -129,6 +138,21 @@ module Tempest
           parent_ref
         end
       { root: root_ref, parent: parent_ref }
+    end
+
+    # Looks up `uri` via com.atproto.repo.getRecord and returns the strong
+    # ref `{ uri:, cid: }` needed to embed it as a quote. The CID is read from
+    # the live record rather than trusted from a stale client-side cache, so
+    # the embed always points at the current version of the quoted post.
+    def self.fetch_subject_ref(client, uri)
+      match = uri.to_s.match(%r{\Aat://([^/]+)/([^/]+)/(.+)\z})
+      raise ArgumentError, "invalid at:// URI: #{uri.inspect}" unless match
+
+      record = client.get(
+        "com.atproto.repo.getRecord",
+        query: { "repo" => match[1], "collection" => match[2], "rkey" => match[3] },
+      )
+      { uri: record.fetch("uri"), cid: record.fetch("cid") }
     end
 
     # Builds a bsky.app web URL from an at:// post URI. `handle` is preferred
