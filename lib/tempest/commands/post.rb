@@ -23,9 +23,10 @@ module Tempest
         end
 
         reply = build_reply(opts[:reply_to], client: client)
+        quote = build_quote(opts[:quote], client: client)
 
         response = Tempest::Post.create(
-          client, did: session.did, text: text, reply: reply,
+          client, did: session.did, text: text, reply: reply, quote: quote,
           langs: opts[:langs],
         )
 
@@ -44,7 +45,7 @@ module Tempest
       end
 
       def parse(argv)
-        opts = { langs: ["ja"], json: false, reply_to: nil, invalid: false }
+        opts = { langs: ["ja"], json: false, reply_to: nil, quote: nil, invalid: false }
         positional = []
         i = 0
         while i < argv.length
@@ -61,6 +62,12 @@ module Tempest
             i += 2
           when /\A--reply-to=(.+)\z/
             opts[:reply_to] = $1
+            i += 1
+          when "--quote"
+            opts[:quote] = argv[i + 1]
+            i += 2
+          when /\A--quote=(.+)\z/
+            opts[:quote] = $1
             i += 1
           when "--json"
             opts[:json] = true
@@ -84,6 +91,11 @@ module Tempest
       def build_reply(uri, client:)
         return nil if uri.nil? || uri.empty?
         Tempest::Post.fetch_reply_refs(client, uri)
+      end
+
+      def build_quote(uri, client:)
+        return nil if uri.nil? || uri.empty?
+        Tempest::Post.fetch_subject_ref(client, uri)
       end
     end
   end

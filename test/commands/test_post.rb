@@ -143,6 +143,34 @@ class TestCommandsPost < Minitest::Test
     assert_equal "bafyparent", reply["root"]["cid"]
   end
 
+  def test_quote_looks_up_subject_cid_then_creates_post_with_record_embed
+    client = FakeXRPCClient.new(
+      post_response: { "uri" => "at://x", "cid" => "bafy" },
+      get_responses: {
+        "com.atproto.repo.getRecord" => {
+          "uri" => "at://did:plc:bob/app.bsky.feed.post/orig",
+          "cid" => "bafyorig",
+          "value" => { "$type" => "app.bsky.feed.post", "text" => "original" },
+        },
+      },
+    )
+    Tempest::Commands::Post.call(
+      argv: ["--quote", "at://did:plc:bob/app.bsky.feed.post/orig", "great read"],
+      session: fake_session, client: client,
+      stdout: StringIO.new, stderr: StringIO.new, stdin: StringIO.new,
+    )
+    get_call = client.calls.find { |c| c.first == :get }
+    assert_equal "com.atproto.repo.getRecord", get_call[1]
+    assert_equal "did:plc:bob", get_call[2]["repo"]
+    assert_equal "orig", get_call[2]["rkey"]
+
+    _, _, body = client.calls.find { |c| c.first == :post }
+    embed = body[:record]["embed"]
+    assert_equal "app.bsky.embed.record", embed["$type"]
+    assert_equal "at://did:plc:bob/app.bsky.feed.post/orig", embed["record"]["uri"]
+    assert_equal "bafyorig", embed["record"]["cid"]
+  end
+
   def test_reply_to_thread_member_inherits_root_from_parents_reply_root
     client = FakeXRPCClient.new(
       post_response: { "uri" => "at://x", "cid" => "bafy" },

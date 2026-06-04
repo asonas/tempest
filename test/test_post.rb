@@ -193,6 +193,33 @@ class TestPostCreate < Minitest::Test
     refute body[:record].key?("reply")
   end
 
+  def test_create_with_quote_attaches_record_embed
+    client = FakeClient.new("uri" => "at://did:plc:abc/app.bsky.feed.post/q")
+
+    Tempest::Post.create(
+      client,
+      did: "did:plc:abc",
+      text: "great post",
+      quote: { uri: "at://did:plc:bob/app.bsky.feed.post/orig", cid: "bafyorig" },
+      created_at: "2026-05-15T00:00:00.000Z",
+    )
+
+    _, body = client.calls.first
+    embed = body[:record]["embed"]
+    assert_equal "app.bsky.embed.record", embed["$type"]
+    assert_equal(
+      { "uri" => "at://did:plc:bob/app.bsky.feed.post/orig", "cid" => "bafyorig" },
+      embed["record"],
+    )
+  end
+
+  def test_create_without_quote_does_not_set_embed_field
+    client = FakeClient.new("uri" => "at://x")
+    Tempest::Post.create(client, did: "did:plc:abc", text: "plain")
+    _, body = client.calls.first
+    refute body[:record].key?("embed")
+  end
+
   def test_create_attaches_mention_facet_for_handle_in_text
     client = FakeClient.new("uri" => "at://x")
     def client.get(_nsid, query:)
@@ -625,6 +652,48 @@ class TestPostFetchReplyRefs < Minitest::Test
   def test_raises_on_malformed_uri
     assert_raises(ArgumentError) do
       Tempest::Post.fetch_reply_refs(FakeClient.new({}), "not-an-at-uri")
+    end
+  end
+end
+
+class TestPostFetchSubjectRef < Minitest::Test
+  class FakeClient
+    attr_reader :queries
+    def initialize(record)
+      @record = record
+      @queries = []
+    end
+    def get(nsid, query: nil)
+      raise "unexpected #{nsid}" unless nsid == "com.atproto.repo.getRecord"
+      @queries << query
+      @record
+    end
+  end
+
+  def test_returns_uri_and_cid_from_live_record
+    record = {
+      "uri" => "at://did:plc:bob/app.bsky.feed.post/orig",
+      "cid" => "bafyorig",
+      "value" => { "$type" => "app.bsky.feed.post", "text" => "hi" },
+    }
+    ref = Tempest::Post.fetch_subject_ref(FakeClient.new(record),
+                                          "at://did:plc:bob/app.bsky.feed.post/orig")
+    assert_equal({ uri: "at://did:plc:bob/app.bsky.feed.post/orig", cid: "bafyorig" }, ref)
+  end
+
+  def test_passes_repo_collection_rkey_to_get_record
+    record = { "uri" => "u", "cid" => "c" }
+    client = FakeClient.new(record)
+    Tempest::Post.fetch_subject_ref(client, "at://did:plc:bob/app.bsky.feed.post/orig")
+    query = client.queries.first
+    assert_equal "did:plc:bob", query["repo"]
+    assert_equal "app.bsky.feed.post", query["collection"]
+    assert_equal "orig", query["rkey"]
+  end
+
+  def test_raises_on_malformed_uri
+    assert_raises(ArgumentError) do
+      Tempest::Post.fetch_subject_ref(FakeClient.new({}), "not-an-at-uri")
     end
   end
 end

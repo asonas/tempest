@@ -31,9 +31,11 @@ class TestREPLRunner < Minitest::Test
 
     def get(nsid, query: nil)
       if nsid == "com.atproto.repo.getRecord"
+        # A distinct cid from the timeline post (cid "bafy") so tests can prove
+        # reply/quote read the live record rather than the cached registry cid.
         return {
           "uri" => "at://did:plc:a/app.bsky.feed.post/1",
-          "cid" => "bafy",
+          "cid" => "bafyfresh",
           "value" => { "$type" => "app.bsky.feed.post", "text" => "hi" },
         }
       end
@@ -883,8 +885,48 @@ class TestREPLRunner < Minitest::Test
       "at://did:plc:a/app.bsky.feed.post/1",
       body[:record]["reply"]["parent"]["uri"],
     )
-    assert_equal "bafy", body[:record]["reply"]["parent"]["cid"]
+    # Reply refs come from the live getRecord (cid "bafyfresh"), not the
+    # cached timeline post (cid "bafy").
+    assert_equal "bafyfresh", body[:record]["reply"]["parent"]["cid"]
     assert_match(/posted: at:\/\//, out)
+  end
+
+  def test_quote_to_unknown_id_prints_unknown_id_and_does_not_post
+    out = run_with([":quote $AA nice", ":quit"])
+    assert_match(/unknown id: \$AA/, out)
+    assert_empty @client.post_calls
+  end
+
+  def test_quote_with_empty_body_prints_usage_and_does_not_post
+    out = run_with([":timeline", ":quote $AA", ":quit"])
+    assert_match(/usage: :quote \$XX <text>/, out)
+    assert_empty @client.post_calls
+  end
+
+  def test_quote_without_id_prints_usage_and_does_not_post
+    out = run_with([":quote", ":quit"])
+    assert_match(/usage: :quote \$XX <text>/, out)
+    assert_empty @client.post_calls
+  end
+
+  def test_quote_happy_path_posts_body_with_record_embed
+    out = run_with([":timeline", ":quote $AA my thoughts", ":quit"])
+    assert_equal 1, @client.post_calls.length
+    nsid, body = @client.post_calls.first
+    assert_equal "com.atproto.repo.createRecord", nsid
+    assert_equal "my thoughts", body[:record]["text"]
+    embed = body[:record]["embed"]
+    assert_equal "app.bsky.embed.record", embed["$type"]
+    assert_equal "at://did:plc:a/app.bsky.feed.post/1", embed["record"]["uri"]
+    # The embed cid is fetched live (cid "bafyfresh"), proving the quote does
+    # not trust the cached registry cid ("bafy").
+    assert_equal "bafyfresh", embed["record"]["cid"]
+    assert_match(/posted: at:\/\//, out)
+  end
+
+  def test_help_lists_quote_command
+    out = run_with([":help", ":quit"])
+    assert_match(/:quote \$XX/, out)
   end
 
   class RecordingOpener

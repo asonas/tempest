@@ -33,13 +33,16 @@ module Tempest
     def self.embed_kind_from: (untyped embed) -> Symbol?
 
     # Compose and send an app.bsky.feed.post record. Returns the createRecord response.
-    def self.create: (XRPCClient client, did: String, text: String, ?reply: reply_refs?, ?langs: Array[String]?, ?created_at: String) -> untyped
+    def self.create: (XRPCClient client, did: String, text: String, ?reply: reply_refs?, ?quote: ref?, ?langs: Array[String]?, ?created_at: String) -> untyped
 
     # Compose and send an app.bsky.feed.like record. Returns the createRecord response.
     def self.like: (XRPCClient client, did: String, subject_uri: String, subject_cid: String, ?created_at: String) -> untyped
 
     # Resolve reply refs (root + parent) for a parent post URI.
     def self.fetch_reply_refs: (XRPCClient client, String parent_uri) -> reply_refs
+
+    # Resolve a strong ref (uri + cid) for a post URI, for use as a quote embed.
+    def self.fetch_subject_ref: (XRPCClient client, String uri) -> ref
 
     # Build a bsky.app web URL from an at:// post URI, or nil if not a post record.
     def self.bsky_url: (at_uri: String, ?handle: String?) -> String?

@@ -116,6 +116,7 @@ If you have been using a single-account installation of an earlier `tempest` rel
 | `:stream on/off` | Toggle the Jetstream live feed                   |
 | `:compose`       | Open your editor to compose a multi-line post    |
 | `:open $LX`      | Open the URL with id `$LX` in the browser        |
+| `:quote $XX <text>` | Quote-post the post with id `$XX`             |
 | `:help`          | Show in-app help                                 |
 | `:quit`          | Exit (`Ctrl-D` works too)                        |
 | `$XX <text>`     | Reply to the post with id `$XX`                  |
@@ -146,7 +147,10 @@ tempest post "今日もよろしくお願いします"
 tempest feed me --since today --format json | jq '.text'
 tempest feed author asonas.bsky.social --limit 20
 tempest --user tempest-dev.bsky.social post "from the dev account"
+tempest post "great read" --quote at://did:plc:.../app.bsky.feed.post/...
 ```
+
+`--reply-to` and `--quote` both take a target post's `at://` URI: `--reply-to` threads your post as a reply, while `--quote` embeds the target as a quote post.
 
 `--format=json` emits newline-delimited JSON; one post per line. The schema is documented in `lib/tempest/post_view.rb`.
 
